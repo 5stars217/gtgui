@@ -10,11 +10,12 @@
     "server": "node server.js"
   },
   "dependencies": {
-    "phaser": "^3.70.0",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "phaser": "^3.70.0"
   },
   "devDependencies": {
+    "puppeteer": "^24.34.0",
     "vite": "^5.0.0"
   }
 }
