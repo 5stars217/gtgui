@@ -9,8 +9,11 @@ const __dirname = dirname(__filename)
 
 const app = express()
 app.use(cors())
-app.use(express.json())
-app.use(express.static(join(__dirname, 'dist')))
+
+// Only parse JSON for API routes
+app.use('/api', express.json({ limit: '1mb' }))
+
+// Static files served AFTER API routes are defined
 
 const GT_PATH = process.env.GT_PATH || `${process.env.HOME}/go/bin/gt`
 const TOWN_ROOT = process.env.TOWN_ROOT || `${process.env.HOME}/gt`
@@ -202,9 +205,18 @@ function getPolecatsForRig(rigName) {
   return polecats
 }
 
+// Static files
+app.use(express.static(join(__dirname, 'dist')))
+
 // Serve index.html for all other routes (SPA)
 app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'))
+})
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err.message)
+  res.status(500).json({ error: err.message })
 })
 
 const PORT = process.env.PORT || 8080
