@@ -841,6 +841,30 @@ export class GameScene extends Phaser.Scene {
     unit.status = status
     unit.gridX = gridX
     unit.gridY = gridY
+    unit.progress = 0
+    unit.tokensUsed = 0
+    unit.assignedAt = null
+    unit.rig = null
+
+    // Stub methods for compatibility - actual progress shown in UI card
+    unit.updateProgress = (progress, tokensUsed, assignedAt) => {
+      unit.progress = progress || 0
+      unit.tokensUsed = tokensUsed || 0
+      unit.assignedAt = assignedAt
+    }
+
+    unit.setWarningLevel = (level) => {
+      // Visual warning via sprite tint instead of separate graphics
+      if (level === 0) {
+        sprite.clearTint()
+      } else if (level === 1) {
+        sprite.setTint(0xFFFF88)  // Yellow tint
+      } else if (level === 2) {
+        sprite.setTint(0xFFAA44)  // Orange tint
+      } else if (level === 3) {
+        sprite.setTint(0xFF6666)  // Red tint
+      }
+    }
 
     // Selection methods with pulsing animation
     unit.select = () => {
@@ -1090,22 +1114,219 @@ export class GameScene extends Phaser.Scene {
   async refreshState() {
     try {
       const state = await this.api.getStatus()
+
+      // Get settings from UI scene for threshold calculations
+      const uiScene = this.scene.get('UIScene')
+      const settings = uiScene?.settings || {
+        stuckTokenThreshold: 25000,
+        stuckTimeThreshold: 1800000,
+        warningTokenThreshold: 20000,
+        warningTimeThreshold: 1440000
+      }
+
       // Update unit states
       if (state.polecats) {
         state.polecats.forEach(pc => {
           const unit = this.units.get(`polecat-${pc.name}`)
           if (unit) {
+            const oldStatus = unit.status
             unit.status = pc.status
+            unit.rig = pc.rig
+            unit.issue = pc.issue
+
             // Update sprite based on status
             const newKey = pc.status === 'working' ? 'unit-polecat-working' :
                           pc.status === 'stuck' ? 'unit-polecat-stuck' : 'unit-polecat-idle'
             unit.sprite.setTexture(newKey)
+
+            // Play sea lion animation if just became stuck
+            if (oldStatus !== 'stuck' && pc.status === 'stuck') {
+              this.playSeaLionAttack(unit)
+            }
+
+            // Update progress if available
+            if (unit.updateProgress) {
+              unit.updateProgress(pc.progress || 0, pc.tokensUsed || 0, pc.assignedAt)
+            }
+
+            // Calculate warning level based on thresholds
+            if (pc.status === 'working' && unit.setWarningLevel) {
+              const tokensUsed = pc.tokensUsed || 0
+              const elapsed = pc.assignedAt ? Date.now() - new Date(pc.assignedAt).getTime() : 0
+
+              // Calculate percentage of thresholds
+              const tokenPercent = tokensUsed / settings.stuckTokenThreshold
+              const timePercent = elapsed / settings.stuckTimeThreshold
+
+              const maxPercent = Math.max(tokenPercent, timePercent)
+
+              if (maxPercent >= 0.9) {
+                unit.setWarningLevel(2)  // Orange - 90%
+              } else if (maxPercent >= 0.8) {
+                unit.setWarningLevel(1)  // Yellow - 80%
+              } else {
+                unit.setWarningLevel(0)  // No warning
+              }
+            } else if (pc.status === 'stuck' && unit.setWarningLevel) {
+              unit.setWarningLevel(3)  // Red - stuck
+            } else if (unit.setWarningLevel) {
+              unit.setWarningLevel(0)  // Clear warning
+            }
           }
         })
       }
       this.events.emit('stateUpdated', state)
+
+      // Update village navigator in UI
+      if (uiScene?.updateVillageNavigator) {
+        uiScene.updateVillageNavigator()
+      }
+      if (uiScene?.updateMiniStatusBar) {
+        uiScene.updateMiniStatusBar()
+      }
     } catch (e) {
       // Silently fail on refresh
     }
+  }
+
+  // Sea lion attack animation when polecat gets stuck (killed)
+  playSeaLionAttack(unit) {
+    const unitX = unit.x
+    const unitY = unit.y
+    const unitId = unit.id
+    const unitName = unit.unitName
+
+    // Create sea lion emerging from below
+    const seaLion = this.add.image(unitX - 60, unitY + 80, 'sea-lion')
+    seaLion.setOrigin(0.5, 1)
+    seaLion.setScale(0.5)
+    seaLion.setAlpha(0)
+    seaLion.setDepth(600)
+    this.effectsLayer.add(seaLion)
+
+    // Water splash effect
+    const splash = this.add.graphics()
+    splash.setPosition(unitX - 40, unitY + 40)
+    splash.setAlpha(0)
+    splash.setDepth(599)
+    this.effectsLayer.add(splash)
+
+    // Animation sequence
+    // 1. Sea lion emerges with splash
+    this.tweens.add({
+      targets: seaLion,
+      y: unitY + 20,
+      alpha: 1,
+      scale: 1.2,
+      duration: 400,
+      ease: 'Back.easeOut',
+      onStart: () => {
+        // Draw water splash
+        splash.setAlpha(1)
+        splash.fillStyle(0x3498DB, 0.7)
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2
+          const dist = 15 + Math.random() * 10
+          splash.fillCircle(Math.cos(angle) * dist, Math.sin(angle) * dist, 4 + Math.random() * 3)
+        }
+      }
+    })
+
+    // 2. Sea lion lunges at penguin
+    this.tweens.add({
+      targets: seaLion,
+      x: unitX + 10,
+      y: unitY - 5,
+      duration: 250,
+      delay: 450,
+      ease: 'Power3'
+    })
+
+    // 3. Penguin shakes in terror
+    this.tweens.add({
+      targets: unit.sprite,
+      x: { from: -4, to: 4 },
+      duration: 40,
+      delay: 450,
+      yoyo: true,
+      repeat: 5,
+      ease: 'Linear'
+    })
+
+    // 4. Sea lion grabs penguin and drags it down!
+    this.tweens.add({
+      targets: [seaLion, unit],
+      y: unitY + 120,
+      duration: 500,
+      delay: 750,
+      ease: 'Power2'
+    })
+
+    // Penguin spins as it's dragged
+    this.tweens.add({
+      targets: unit.sprite,
+      angle: 360,
+      duration: 500,
+      delay: 750,
+      ease: 'Linear'
+    })
+
+    // Both fade out as they go under
+    this.tweens.add({
+      targets: [seaLion, unit],
+      alpha: 0,
+      duration: 400,
+      delay: 900,
+      onComplete: () => {
+        seaLion.destroy()
+        // Remove the unit from the game
+        this.units.delete(unitId)
+        unit.destroy()
+
+        // Also remove from village's polecat list
+        for (const village of this.villages) {
+          const idx = village.polecats?.indexOf(unitName)
+          if (idx > -1) {
+            village.polecats.splice(idx, 1)
+          }
+        }
+
+        // Notify UI
+        this.events.emit('selectionChanged', [])
+      }
+    })
+
+    // 5. Big splash as they go under
+    this.tweens.add({
+      targets: splash,
+      scale: 1.5,
+      alpha: 0,
+      duration: 500,
+      delay: 800,
+      onComplete: () => {
+        splash.destroy()
+      }
+    })
+
+    // Create bubbles rising up after
+    this.time.delayedCall(1100, () => {
+      for (let i = 0; i < 5; i++) {
+        const bubble = this.add.graphics()
+        bubble.fillStyle(0x87CEEB, 0.6)
+        bubble.fillCircle(0, 0, 3 + Math.random() * 3)
+        bubble.setPosition(unitX + (Math.random() - 0.5) * 30, unitY + 50)
+        this.effectsLayer.add(bubble)
+
+        this.tweens.add({
+          targets: bubble,
+          y: unitY - 20,
+          alpha: 0,
+          duration: 800 + Math.random() * 400,
+          delay: i * 100,
+          ease: 'Sine.easeOut',
+          onComplete: () => bubble.destroy()
+        })
+      }
+    })
   }
 }

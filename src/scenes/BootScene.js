@@ -71,6 +71,9 @@ export class BootScene extends Phaser.Scene {
     // Effect textures
     this.generateDustPuff()
     this.generateSparkle()
+
+    // Sea lion for stuck animation
+    this.generateSeaLion()
   }
 
   generateMultiplayerSprites() {
@@ -1029,6 +1032,75 @@ export class BootScene extends Phaser.Scene {
     g.fillPath()
 
     g.generateTexture('sparkle', size, size)
+    g.destroy()
+  }
+
+  generateSeaLion() {
+    const g = this.make.graphics({ x: 0, y: 0, add: false })
+    const width = 64
+    const height = 48
+
+    // Shadow on water
+    g.fillStyle(0x2980B9, 0.4)
+    g.fillEllipse(width/2, height - 6, 40, 10)
+
+    // Water splash effect
+    g.fillStyle(0x3498DB, 0.6)
+    g.fillEllipse(width/2 - 20, height - 8, 12, 6)
+    g.fillEllipse(width/2 + 20, height - 8, 12, 6)
+
+    // Sea lion body (dark gray-brown)
+    g.fillStyle(0x5D4E37, 1)
+    // Back/body
+    g.fillEllipse(width/2, height - 14, 30, 14)
+
+    // Lighter belly
+    g.fillStyle(0x8B7355, 1)
+    g.fillEllipse(width/2, height - 10, 22, 10)
+
+    // Neck and head
+    g.fillStyle(0x5D4E37, 1)
+    g.fillEllipse(width/2 + 8, height - 24, 14, 16)
+
+    // Head
+    g.fillStyle(0x6B5B45, 1)
+    g.fillCircle(width/2 + 14, height - 32, 10)
+
+    // Snout
+    g.fillStyle(0x5D4E37, 1)
+    g.fillEllipse(width/2 + 22, height - 30, 8, 6)
+
+    // Nose
+    g.fillStyle(0x1A1A1A, 1)
+    g.fillCircle(width/2 + 28, height - 30, 3)
+
+    // Eyes
+    g.fillStyle(0x000000, 1)
+    g.fillCircle(width/2 + 16, height - 34, 3)
+    // Eye highlight
+    g.fillStyle(0xFFFFFF, 1)
+    g.fillCircle(width/2 + 15, height - 35, 1.5)
+
+    // Whiskers
+    g.lineStyle(1, 0x1A1A1A, 0.6)
+    g.lineBetween(width/2 + 24, height - 28, width/2 + 34, height - 26)
+    g.lineBetween(width/2 + 24, height - 30, width/2 + 35, height - 30)
+    g.lineBetween(width/2 + 24, height - 32, width/2 + 34, height - 34)
+
+    // Flippers
+    g.fillStyle(0x4A3F2F, 1)
+    // Front flipper (raised, grabbing)
+    g.fillEllipse(width/2 + 2, height - 18, 10, 6)
+    // Back flippers
+    g.fillEllipse(width/2 - 18, height - 8, 8, 5)
+
+    // Mouth (slightly open, menacing)
+    g.lineStyle(2, 0x8B4513, 1)
+    g.beginPath()
+    g.arc(width/2 + 22, height - 28, 4, 0.2, Math.PI - 0.2, false)
+    g.strokePath()
+
+    g.generateTexture('sea-lion', width, height)
     g.destroy()
   }
 }

@@ -18,6 +18,11 @@ export class UIScene extends Phaser.Scene {
     this.createCommandPanel()
     this.createTooltip()
     this.createNewProjectButton()
+    this.createNotificationArea()
+    this.createSettingsButton()
+
+    // Initialize settings from localStorage
+    this.loadSettings()
 
     // Listen for game events
     if (this.gameScene) {
@@ -44,6 +49,501 @@ export class UIScene extends Phaser.Scene {
 
     // Handle resize
     this.scale.on('resize', this.handleResize, this)
+
+    // Initialize notification sounds
+    this.initNotificationSounds()
+  }
+
+  // ===== NOTIFICATION SYSTEM =====
+
+  createNotificationArea() {
+    // Notification container - top right corner
+    this.notifications = []
+    this.notificationContainer = this.add.container(this.cameras.main.width - 320, 70)
+    this.notificationContainer.setDepth(950)
+  }
+
+  showNotification(type, title, message, agentData = null) {
+    const notifWidth = 300
+    const notifHeight = 80
+    const yOffset = this.notifications.length * (notifHeight + 10)
+
+    const notif = this.add.container(0, yOffset)
+    notif.setAlpha(0)
+    notif.setX(320)  // Start off-screen
+
+    // Background colors by type
+    const colors = {
+      success: { bg: 0x2ECC71, icon: '✓' },
+      warning: { bg: 0xF39C12, icon: '⚠' },
+      error: { bg: 0xE74C3C, icon: '!' },
+      info: { bg: 0x3498DB, icon: 'i' },
+      stuck: { bg: 0xE74C3C, icon: '⚠' }
+    }
+    const color = colors[type] || colors.info
+
+    // Card background
+    const bg = this.add.graphics()
+    // Shadow
+    bg.fillStyle(0x000000, 0.25)
+    bg.fillRoundedRect(4, 4, notifWidth, notifHeight, 14)
+    // Main
+    bg.fillStyle(0xFFFFFF, 0.98)
+    bg.fillRoundedRect(0, 0, notifWidth, notifHeight, 14)
+    // Left accent bar
+    bg.fillStyle(color.bg, 1)
+    bg.fillRoundedRect(0, 0, 8, notifHeight, { tl: 14, tr: 0, bl: 14, br: 0 })
+    // Border
+    bg.lineStyle(2, color.bg, 0.8)
+    bg.strokeRoundedRect(0, 0, notifWidth, notifHeight, 14)
+
+    // Icon circle
+    const iconBg = this.add.graphics()
+    iconBg.fillStyle(color.bg, 0.15)
+    iconBg.fillCircle(30, notifHeight/2, 18)
+    iconBg.fillStyle(color.bg, 1)
+    iconBg.fillCircle(30, notifHeight/2, 14)
+
+    const iconText = this.add.text(30, notifHeight/2, color.icon, {
+      font: 'bold 14px Fredoka',
+      fill: '#FFFFFF'
+    }).setOrigin(0.5)
+
+    // Title
+    const titleText = this.add.text(55, 14, title, {
+      font: 'bold 14px Fredoka',
+      fill: '#333333'
+    })
+
+    // Message
+    const msgText = this.add.text(55, 34, message, {
+      font: '12px Fredoka',
+      fill: '#666666',
+      wordWrap: { width: notifWidth - 70 }
+    })
+
+    // Close button
+    const closeBtn = this.add.text(notifWidth - 20, 10, '×', {
+      font: 'bold 18px Fredoka',
+      fill: '#999999'
+    }).setOrigin(0.5)
+    closeBtn.setInteractive({ useHandCursor: true })
+    closeBtn.on('pointerover', () => closeBtn.setStyle({ fill: '#E74C3C' }))
+    closeBtn.on('pointerout', () => closeBtn.setStyle({ fill: '#999999' }))
+    closeBtn.on('pointerdown', () => this.dismissNotification(notif))
+
+    // Click to view agent
+    if (agentData) {
+      const clickZone = this.add.zone(notifWidth/2, notifHeight/2, notifWidth - 40, notifHeight)
+      clickZone.setInteractive({ useHandCursor: true })
+      clickZone.on('pointerdown', () => {
+        this.dismissNotification(notif)
+        // Navigate to agent
+        if (this.gameScene && agentData.rig && agentData.agent) {
+          this.gameScene.panToVillage(agentData.rig)
+        }
+      })
+      notif.add(clickZone)
+    }
+
+    notif.add([bg, iconBg, iconText, titleText, msgText, closeBtn])
+    this.notificationContainer.add(notif)
+    this.notifications.push(notif)
+
+    // Animate in
+    this.tweens.add({
+      targets: notif,
+      x: 0,
+      alpha: 1,
+      duration: 300,
+      ease: 'Back.easeOut'
+    })
+
+    // Play sound
+    this.playNotificationSound(type)
+
+    // Auto-dismiss after 8 seconds
+    this.time.delayedCall(8000, () => {
+      if (notif.active) {
+        this.dismissNotification(notif)
+      }
+    })
+  }
+
+  dismissNotification(notif) {
+    const index = this.notifications.indexOf(notif)
+    if (index === -1) return
+
+    this.tweens.add({
+      targets: notif,
+      x: 320,
+      alpha: 0,
+      duration: 200,
+      ease: 'Back.easeIn',
+      onComplete: () => {
+        notif.destroy()
+        this.notifications.splice(index, 1)
+        // Reposition remaining notifications
+        this.notifications.forEach((n, i) => {
+          this.tweens.add({
+            targets: n,
+            y: i * 90,
+            duration: 200,
+            ease: 'Sine.easeOut'
+          })
+        })
+      }
+    })
+  }
+
+  initNotificationSounds() {
+    // Use Web Audio API to create simple notification sounds
+    try {
+      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+      this.soundsEnabled = true
+    } catch (e) {
+      console.warn('Web Audio not available')
+      this.soundsEnabled = false
+    }
+  }
+
+  playNotificationSound(type) {
+    if (!this.soundsEnabled || !this.audioCtx || !this.settings?.enableSounds) return
+
+    const ctx = this.audioCtx
+    const now = ctx.currentTime
+
+    // Resume audio context if suspended
+    if (ctx.state === 'suspended') {
+      ctx.resume()
+    }
+
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+
+    gain.gain.setValueAtTime(0.15, now)
+
+    switch (type) {
+      case 'success':
+        // Cheerful ascending tone
+        osc.frequency.setValueAtTime(523, now)  // C5
+        osc.frequency.setValueAtTime(659, now + 0.1)  // E5
+        osc.frequency.setValueAtTime(784, now + 0.2)  // G5
+        gain.gain.exponentialDecayTo = 0.01
+        gain.gain.setValueAtTime(0.15, now)
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.4)
+        osc.start(now)
+        osc.stop(now + 0.4)
+        break
+
+      case 'warning':
+      case 'stuck':
+        // Warning double beep
+        osc.frequency.setValueAtTime(440, now)  // A4
+        gain.gain.setValueAtTime(0.15, now)
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.15)
+        gain.gain.setValueAtTime(0.15, now + 0.2)
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.35)
+        osc.start(now)
+        osc.stop(now + 0.4)
+        break
+
+      case 'error':
+        // Low warning tone
+        osc.frequency.setValueAtTime(220, now)  // A3
+        osc.type = 'sawtooth'
+        gain.gain.setValueAtTime(0.1, now)
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.5)
+        osc.start(now)
+        osc.stop(now + 0.5)
+        break
+
+      default:
+        // Info pop
+        osc.frequency.setValueAtTime(880, now)  // A5
+        gain.gain.setValueAtTime(0.1, now)
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.15)
+        osc.start(now)
+        osc.stop(now + 0.15)
+    }
+  }
+
+  // ===== SETTINGS PANEL =====
+
+  loadSettings() {
+    try {
+      const saved = localStorage.getItem('gtgui_settings')
+      this.settings = saved ? JSON.parse(saved) : {
+        stuckTokenThreshold: 25000,
+        stuckTimeThreshold: 1800000,  // 30 min
+        enableSounds: true,
+        enableNotifications: true
+      }
+    } catch (e) {
+      this.settings = {
+        stuckTokenThreshold: 25000,
+        stuckTimeThreshold: 1800000,
+        enableSounds: true,
+        enableNotifications: true
+      }
+    }
+  }
+
+  saveSettings() {
+    localStorage.setItem('gtgui_settings', JSON.stringify(this.settings))
+    // Also update server
+    this.api.updateSettings(this.settings).catch(e => console.warn('Failed to sync settings:', e))
+  }
+
+  createSettingsButton() {
+    const width = this.cameras.main.width
+
+    // Gear icon button in top bar (left of town name)
+    const btnX = width - 180
+    const btnY = 33
+
+    this.settingsBtn = this.add.container(btnX, btnY)
+
+    const bg = this.add.graphics()
+    bg.fillStyle(0xFFFFFF, 0.2)
+    bg.fillCircle(0, 0, 16)
+
+    const icon = this.add.text(0, 0, '⚙', {
+      font: '18px Fredoka',
+      fill: '#FFFFFF'
+    }).setOrigin(0.5)
+
+    const zone = this.add.zone(0, 0, 32, 32)
+    zone.setInteractive({ useHandCursor: true })
+
+    zone.on('pointerover', () => {
+      bg.clear()
+      bg.fillStyle(0xFFFFFF, 0.35)
+      bg.fillCircle(0, 0, 18)
+      this.tweens.add({
+        targets: icon,
+        angle: 90,
+        duration: 300,
+        ease: 'Sine.easeOut'
+      })
+    })
+
+    zone.on('pointerout', () => {
+      bg.clear()
+      bg.fillStyle(0xFFFFFF, 0.2)
+      bg.fillCircle(0, 0, 16)
+      this.tweens.add({
+        targets: icon,
+        angle: 0,
+        duration: 300,
+        ease: 'Sine.easeOut'
+      })
+    })
+
+    zone.on('pointerdown', () => this.showSettingsPanel())
+
+    this.settingsBtn.add([bg, icon, zone])
+  }
+
+  showSettingsPanel() {
+    const width = this.cameras.main.width
+    const height = this.cameras.main.height
+    const panelWidth = 400
+    const panelHeight = 380
+
+    this.settingsPanel = this.add.container(width/2, height/2)
+    this.settingsPanel.setDepth(1000)
+
+    // Backdrop
+    const backdrop = this.add.graphics()
+    backdrop.fillStyle(0x000000, 0.6)
+    backdrop.fillRect(-width/2, -height/2, width, height)
+    backdrop.setInteractive(new Phaser.Geom.Rectangle(-width/2, -height/2, width, height), Phaser.Geom.Rectangle.Contains)
+
+    // Panel
+    const panel = this.add.graphics()
+    this.drawGlossyPanel(panel, -panelWidth/2, -panelHeight/2, panelWidth, panelHeight, 0x0077B6, 20)
+
+    // White content area
+    panel.fillStyle(0xFFFFFF, 0.98)
+    panel.fillRoundedRect(-panelWidth/2 + 10, -panelHeight/2 + 60, panelWidth - 20, panelHeight - 80, 12)
+
+    // Title
+    const title = this.add.text(0, -panelHeight/2 + 30, 'SETTINGS', {
+      font: 'bold 22px Fredoka',
+      fill: '#FFFFFF',
+      stroke: '#005588',
+      strokeThickness: 2
+    }).setOrigin(0.5)
+
+    // Close button
+    const closeBtn = this.add.text(panelWidth/2 - 25, -panelHeight/2 + 25, '×', {
+      font: 'bold 24px Fredoka',
+      fill: '#FFFFFF'
+    }).setOrigin(0.5)
+    closeBtn.setInteractive({ useHandCursor: true })
+    closeBtn.on('pointerdown', () => {
+      this.settingsPanel.destroy()
+      this.settingsPanel = null
+    })
+
+    this.settingsPanel.add([backdrop, panel, title, closeBtn])
+
+    // Settings items
+    let yPos = -panelHeight/2 + 90
+
+    // Token threshold slider
+    this.addSettingSlider('Token Limit', 'stuckTokenThreshold', 5000, 100000, yPos, 'tokens')
+    yPos += 70
+
+    // Time threshold slider
+    this.addSettingSlider('Time Limit', 'stuckTimeThreshold', 300000, 7200000, yPos, 'time')
+    yPos += 70
+
+    // Sound toggle
+    this.addSettingToggle('Notification Sounds', 'enableSounds', yPos)
+    yPos += 50
+
+    // Notification toggle
+    this.addSettingToggle('Show Notifications', 'enableNotifications', yPos)
+    yPos += 70
+
+    // Save button
+    const saveBtn = this.add.graphics()
+    this.drawButton(saveBtn, -80, yPos, 160, 44, 0x2ECC71, true)
+    const saveText = this.add.text(0, yPos + 22, 'SAVE', {
+      font: 'bold 16px Fredoka',
+      fill: '#FFFFFF'
+    }).setOrigin(0.5)
+    const saveZone = this.add.zone(0, yPos + 22, 160, 44)
+    saveZone.setInteractive({ useHandCursor: true })
+    saveZone.on('pointerdown', () => {
+      this.saveSettings()
+      this.showNotification('success', 'Settings Saved', 'Your preferences have been updated')
+      this.settingsPanel.destroy()
+      this.settingsPanel = null
+    })
+
+    this.settingsPanel.add([saveBtn, saveText, saveZone])
+
+    // Animate in
+    this.settingsPanel.setScale(0.8)
+    this.settingsPanel.setAlpha(0)
+    this.tweens.add({
+      targets: this.settingsPanel,
+      scale: 1,
+      alpha: 1,
+      duration: 200,
+      ease: 'Back.easeOut'
+    })
+  }
+
+  addSettingSlider(label, key, min, max, y, format) {
+    const sliderWidth = 280
+    const x = -sliderWidth/2
+
+    // Label
+    const labelText = this.add.text(x, y, label, {
+      font: 'bold 14px Fredoka',
+      fill: '#333333'
+    })
+
+    // Current value
+    const formatValue = (val) => {
+      if (format === 'time') {
+        const mins = Math.round(val / 60000)
+        return mins < 60 ? `${mins} min` : `${(mins/60).toFixed(1)} hr`
+      }
+      return val.toLocaleString()
+    }
+
+    const valueText = this.add.text(sliderWidth/2 + 10, y, formatValue(this.settings[key]), {
+      font: 'bold 14px Fredoka',
+      fill: '#0077B6'
+    }).setOrigin(1, 0)
+
+    // Slider track
+    const track = this.add.graphics()
+    track.fillStyle(0xE0E0E0, 1)
+    track.fillRoundedRect(x, y + 25, sliderWidth, 12, 6)
+
+    // Slider fill
+    const fill = this.add.graphics()
+    const ratio = (this.settings[key] - min) / (max - min)
+    fill.fillStyle(0x0077B6, 1)
+    fill.fillRoundedRect(x, y + 25, sliderWidth * ratio, 12, 6)
+
+    // Slider thumb
+    const thumb = this.add.graphics()
+    thumb.fillStyle(0xFFFFFF, 1)
+    thumb.fillCircle(x + sliderWidth * ratio, y + 31, 10)
+    thumb.lineStyle(2, 0x0077B6, 1)
+    thumb.strokeCircle(x + sliderWidth * ratio, y + 31, 10)
+
+    // Interaction zone
+    const zone = this.add.zone(0, y + 31, sliderWidth + 40, 30)
+    zone.setInteractive({ useHandCursor: true, draggable: true })
+
+    zone.on('drag', (pointer, dragX) => {
+      const localX = dragX - x
+      const clampedX = Math.max(0, Math.min(sliderWidth, localX))
+      const newRatio = clampedX / sliderWidth
+      const newValue = Math.round(min + (max - min) * newRatio)
+
+      this.settings[key] = newValue
+      valueText.setText(formatValue(newValue))
+
+      fill.clear()
+      fill.fillStyle(0x0077B6, 1)
+      fill.fillRoundedRect(x, y + 25, sliderWidth * newRatio, 12, 6)
+
+      thumb.clear()
+      thumb.fillStyle(0xFFFFFF, 1)
+      thumb.fillCircle(x + clampedX, y + 31, 10)
+      thumb.lineStyle(2, 0x0077B6, 1)
+      thumb.strokeCircle(x + clampedX, y + 31, 10)
+    })
+
+    this.settingsPanel.add([labelText, valueText, track, fill, thumb, zone])
+  }
+
+  addSettingToggle(label, key, y) {
+    const x = -140
+
+    // Label
+    const labelText = this.add.text(x, y + 8, label, {
+      font: 'bold 14px Fredoka',
+      fill: '#333333'
+    })
+
+    // Toggle switch
+    const toggle = this.add.graphics()
+    const drawToggle = () => {
+      toggle.clear()
+      if (this.settings[key]) {
+        toggle.fillStyle(0x2ECC71, 1)
+        toggle.fillRoundedRect(100, y + 5, 50, 26, 13)
+        toggle.fillStyle(0xFFFFFF, 1)
+        toggle.fillCircle(137, y + 18, 10)
+      } else {
+        toggle.fillStyle(0xCCCCCC, 1)
+        toggle.fillRoundedRect(100, y + 5, 50, 26, 13)
+        toggle.fillStyle(0xFFFFFF, 1)
+        toggle.fillCircle(113, y + 18, 10)
+      }
+    }
+    drawToggle()
+
+    const zone = this.add.zone(125, y + 18, 60, 30)
+    zone.setInteractive({ useHandCursor: true })
+    zone.on('pointerdown', () => {
+      this.settings[key] = !this.settings[key]
+      drawToggle()
+    })
+
+    this.settingsPanel.add([labelText, toggle, zone])
   }
 
   // Helper to darken a color
@@ -161,6 +661,54 @@ export class UIScene extends Phaser.Scene {
 
     // Connected users indicator
     this.createUsersIndicator()
+
+    // Mini status bar (agent summary)
+    this.createMiniStatusBar()
+  }
+
+  createMiniStatusBar() {
+    // Position between resources and users indicator
+    this.miniStatusBar = this.add.container(480, 33)
+
+    // Status counts
+    this.miniStatusText = this.add.text(0, 0, '', {
+      font: '12px Fredoka',
+      fill: '#B0E0E6'
+    }).setOrigin(0, 0.5)
+
+    this.miniStatusBar.add(this.miniStatusText)
+
+    // Update periodically
+    this.time.addEvent({
+      delay: 5000,
+      callback: this.updateMiniStatusBar,
+      callbackScope: this,
+      loop: true
+    })
+  }
+
+  updateMiniStatusBar() {
+    const unitsMap = this.gameScene?.units
+    const units = unitsMap ? Array.from(unitsMap.values()) : []
+    const working = units.filter(u => u.status === 'working').length
+    const stuck = units.filter(u => u.status === 'stuck').length
+    const idle = units.filter(u => u.status === 'idle').length
+
+    let text = ''
+    if (working > 0) text += `${working} working`
+    if (stuck > 0) text += (text ? ' | ' : '') + `${stuck} stuck`
+    if (idle > 0) text += (text ? ' | ' : '') + `${idle} idle`
+
+    if (!text) text = 'No agents'
+
+    this.miniStatusText.setText(text)
+
+    // Highlight if any stuck
+    if (stuck > 0) {
+      this.miniStatusText.setStyle({ fill: '#E74C3C' })
+    } else {
+      this.miniStatusText.setStyle({ fill: '#B0E0E6' })
+    }
   }
 
   // Animate resource counter
@@ -222,6 +770,50 @@ export class UIScene extends Phaser.Scene {
 
     // Show self as first user
     this.updateConnectedUsers([])
+
+    // Listen for server notifications
+    if (multiplayer.socket) {
+      multiplayer.socket.on('notification', (data) => {
+        if (!this.settings?.enableNotifications) return
+
+        const { type, message, agent, rig } = data
+        let title = 'Notification'
+
+        switch (type) {
+          case 'stuck':
+            title = 'Agent Stuck!'
+            break
+          case 'warning':
+            title = 'Warning'
+            break
+          case 'success':
+            title = 'Task Complete'
+            break
+          case 'info':
+            title = 'Update'
+            break
+          case 'error':
+            title = 'Error'
+            break
+        }
+
+        this.showNotification(type, title, message, { agent, rig })
+
+        // Also add to Mayor chat if open
+        if (this.mayorChat?.visible && type === 'stuck') {
+          this.addMayorMessage('mayor', `Alert: ${agent} in ${rig} needs help! ${message}`)
+        }
+      })
+
+      // Listen for state updates
+      multiplayer.socket.on('state:update', (data) => {
+        if (data.data?.event === 'polecat:completed') {
+          this.showNotification('success', 'Task Complete',
+            `${data.data.polecat} finished: ${data.data.task || 'task'}`,
+            { agent: data.data.polecat, rig: data.data.rig })
+        }
+      })
+    }
   }
 
   updateConnectedUsers(users) {
@@ -369,12 +961,15 @@ export class UIScene extends Phaser.Scene {
   createCommandPanel() {
     // Selection card - Club Penguin player card style with frosted glass effect
     // Initially hidden, shown when something is selected
-    this.selectionCard = this.add.container(20, 70)
-    this.selectionCard.setVisible(false)
-    this.selectionCard.setAlpha(0)
-
+    // Centered on screen
     const cardWidth = 220
     const cardHeight = 300
+    const centerX = (this.cameras.main.width - cardWidth) / 2
+    const centerY = (this.cameras.main.height - cardHeight) / 2
+    this.selectionCard = this.add.container(centerX, centerY)
+    this.selectionCard.setVisible(false)
+    this.selectionCard.setAlpha(0)
+    this.selectionCard.setDepth(800)
 
     // Card background with frosted glass effect
     const cardBg = this.add.graphics()
@@ -481,14 +1076,21 @@ export class UIScene extends Phaser.Scene {
     this.selectedUnit = unit
     this.selectionCard.setVisible(true)
 
-    // Animated entry
-    this.selectionCard.setX(-200)
+    // Center the card
+    const cardWidth = 220
+    const cardHeight = 300
+    const centerX = (this.cameras.main.width - cardWidth) / 2
+    const centerY = (this.cameras.main.height - cardHeight) / 2
+    this.selectionCard.setPosition(centerX, centerY)
+
+    // Animated entry - scale up from center
+    this.selectionCard.setScale(0.8)
     this.selectionCard.setAlpha(0)
     this.tweens.add({
       targets: this.selectionCard,
-      x: 20,
+      scale: 1,
       alpha: 1,
-      duration: 250,
+      duration: 200,
       ease: 'Back.easeOut'
     })
 
@@ -539,10 +1141,78 @@ export class UIScene extends Phaser.Scene {
 
     this.cardStatus.setText(statusText)
 
+    // Clear previous progress info
+    if (this.cardProgressContainer) {
+      this.cardProgressContainer.destroy()
+    }
+
+    // Show progress info for working/stuck units
+    if (status === 'working' || status === 'stuck') {
+      this.showCardProgress(unit)
+    }
+
     // Create contextual action buttons
     this.createCardButtons(status)
 
     this.statusText.setText(`Selected: ${unit.unitName}`)
+  }
+
+  showCardProgress(unit) {
+    const cardWidth = 220
+
+    this.cardProgressContainer = this.add.container(0, 155)
+
+    // Progress bar background
+    const progressBg = this.add.graphics()
+    progressBg.fillStyle(0xE0E0E0, 1)
+    progressBg.fillRoundedRect(15, 0, cardWidth - 30, 14, 7)
+
+    // Progress bar fill
+    const progress = unit.progress || 0
+    const progressFill = this.add.graphics()
+    if (progress > 0) {
+      progressFill.fillStyle(0x2ECC71, 1)
+      progressFill.fillRoundedRect(15, 0, Math.max(14, (cardWidth - 30) * (progress / 100)), 14, 7)
+    }
+
+    // Progress text
+    const progressText = this.add.text(cardWidth/2, 7, `${progress}%`, {
+      font: 'bold 10px Fredoka',
+      fill: progress > 50 ? '#FFFFFF' : '#333333'
+    }).setOrigin(0.5)
+
+    // Time elapsed
+    let timeText = ''
+    if (unit.assignedAt) {
+      const elapsed = Date.now() - new Date(unit.assignedAt).getTime()
+      const mins = Math.round(elapsed / 60000)
+      timeText = mins < 60 ? `${mins}m` : `${Math.round(mins/60)}h ${mins%60}m`
+    }
+
+    const timeLabel = this.add.text(15, 20, `⏱ ${timeText || '--'}`, {
+      font: '11px Fredoka',
+      fill: '#666666'
+    })
+
+    // Token usage
+    const tokens = unit.tokensUsed || 0
+    const tokenLabel = this.add.text(cardWidth - 15, 20, `🪙 ${tokens.toLocaleString()}`, {
+      font: '11px Fredoka',
+      fill: '#666666'
+    }).setOrigin(1, 0)
+
+    // Task preview
+    if (unit.issue || unit.task) {
+      const taskText = (unit.issue || unit.task || '').substring(0, 30)
+      const taskLabel = this.add.text(cardWidth/2, 38, taskText + (taskText.length >= 30 ? '...' : ''), {
+        font: '10px Fredoka',
+        fill: '#999999'
+      }).setOrigin(0.5, 0)
+      this.cardProgressContainer.add(taskLabel)
+    }
+
+    this.cardProgressContainer.add([progressBg, progressFill, progressText, timeLabel, tokenLabel])
+    this.selectionCard.add(this.cardProgressContainer)
   }
 
   createCardButtons(status) {
@@ -567,8 +1237,8 @@ export class UIScene extends Phaser.Scene {
     } else if (status === 'stuck') {
       buttons = [
         { label: 'VIEW PROBLEM', action: 'hook', color: 0xE74C3C, icon: '!' },
-        { label: 'SEND HELP', action: 'mail', color: 0x9B59B6, icon: '@' },
-        { label: 'REASSIGN WORK', action: 'sling', color: 0x2ECC71, icon: '>' },
+        { label: 'REASSIGN WORK', action: 'reassign', color: 0xF39C12, icon: '↻' },
+        { label: 'MARK COMPLETE', action: 'complete', color: 0x2ECC71, icon: '✓' },
         { label: 'STOP', action: 'stop', color: 0x95A5A6, icon: 'X' }
       ]
     }
@@ -653,15 +1323,16 @@ export class UIScene extends Phaser.Scene {
   }
 
   hideSelectionCard() {
-    // Animated exit
+    // Animated exit - scale down to center
     this.tweens.add({
       targets: this.selectionCard,
-      x: -220,
+      scale: 0.8,
       alpha: 0,
-      duration: 200,
+      duration: 150,
       ease: 'Back.easeIn',
       onComplete: () => {
         this.selectionCard.setVisible(false)
+        this.selectionCard.setScale(1)
       }
     })
 
@@ -989,6 +1660,12 @@ export class UIScene extends Phaser.Scene {
       case 'stop':
         this.doStop(agentId)
         break
+      case 'reassign':
+        this.doReassign(agentId, unit)
+        break
+      case 'complete':
+        this.doMarkComplete(agentId)
+        break
     }
   }
 
@@ -1117,6 +1794,269 @@ export class UIScene extends Phaser.Scene {
         showCancel: false
       })
     }
+  }
+
+  async doReassign(agentId, unit) {
+    // Find the rig this polecat belongs to
+    const rigName = unit.rig || this.findRigForAgent(agentId)
+
+    if (!rigName) {
+      await this.showModal({
+        title: 'ERROR',
+        message: 'Could not find project for this agent',
+        showCancel: false
+      })
+      return
+    }
+
+    try {
+      // Get all polecats in the same rig
+      const polecats = await this.api.getPolecats(rigName)
+      const idlePolecats = polecats.filter(p => p.status === 'idle' && p.name !== unit.unitName)
+
+      // Show polecat picker
+      const choice = await this.showReassignPicker(idlePolecats, rigName)
+
+      if (!choice) return
+
+      this.statusText.setText('Reassigning...')
+
+      if (choice === 'spawn_new') {
+        // Spawn a new polecat and assign to it
+        const newPolecat = await this.api.spawnPolecat(rigName)
+        if (this.gameScene) {
+          this.gameScene.addPolecatToVillage(rigName, newPolecat.name)
+        }
+        await this.api.reassign(agentId, `${rigName}/polecats/${newPolecat.name}`, rigName)
+        this.showNotification('success', 'Task Reassigned',
+          `Spawned ${newPolecat.name} and reassigned task`,
+          { agent: newPolecat.name, rig: rigName })
+      } else {
+        // Reassign to existing polecat
+        await this.api.reassign(agentId, `${rigName}/polecats/${choice}`, rigName)
+        this.showNotification('success', 'Task Reassigned',
+          `Task moved to ${choice}`,
+          { agent: choice, rig: rigName })
+      }
+
+      this.statusText.setText('Reassigned!')
+
+      if (this.gameScene) {
+        this.gameScene.refreshState()
+      }
+      this.hideSelectionCard()
+
+    } catch (e) {
+      this.statusText.setText('Reassign failed')
+      await this.showModal({
+        title: 'REASSIGN FAILED',
+        message: e.message,
+        showCancel: false
+      })
+    }
+  }
+
+  findRigForAgent(agentId) {
+    // Try to extract rig from agent ID (format: rig/polecats/name)
+    const parts = agentId.split('/')
+    if (parts.length >= 3) return parts[0]
+
+    // Search villages for this agent
+    const villages = this.gameScene?.villages || []
+    for (const v of villages) {
+      if (v.polecats?.includes(agentId)) {
+        return v.name
+      }
+    }
+    return null
+  }
+
+  async showReassignPicker(idlePolecats, rigName) {
+    return new Promise((resolve) => {
+      const width = this.cameras.main.width
+      const height = this.cameras.main.height
+      const modalWidth = 320
+      const modalHeight = 300 + Math.min(idlePolecats.length, 4) * 45
+
+      this.reassignModal = this.add.container(width/2, height/2)
+      this.reassignModal.setDepth(1000)
+
+      // Backdrop
+      const backdrop = this.add.graphics()
+      backdrop.fillStyle(0x000000, 0.6)
+      backdrop.fillRect(-width/2, -height/2, width, height)
+      backdrop.setInteractive(new Phaser.Geom.Rectangle(-width/2, -height/2, width, height), Phaser.Geom.Rectangle.Contains)
+
+      // Panel
+      const panel = this.add.graphics()
+      this.drawGlossyPanel(panel, -modalWidth/2, -modalHeight/2, modalWidth, modalHeight, 0xF39C12, 18)
+      panel.fillStyle(0xFFFFFF, 0.98)
+      panel.fillRoundedRect(-modalWidth/2 + 10, -modalHeight/2 + 55, modalWidth - 20, modalHeight - 70, 10)
+
+      // Title
+      const title = this.add.text(0, -modalHeight/2 + 28, 'REASSIGN TASK', {
+        font: 'bold 18px Fredoka',
+        fill: '#FFFFFF'
+      }).setOrigin(0.5)
+
+      const subtitle = this.add.text(0, -modalHeight/2 + 75, 'Choose a polecat to take over:', {
+        font: '13px Fredoka',
+        fill: '#666666'
+      }).setOrigin(0.5)
+
+      this.reassignModal.add([backdrop, panel, title, subtitle])
+
+      let yPos = -modalHeight/2 + 100
+
+      // Cleanup function
+      const cleanup = () => {
+        this.reassignModal.destroy()
+        this.reassignModal = null
+      }
+
+      // Idle polecats
+      if (idlePolecats.length === 0) {
+        const noIdle = this.add.text(0, yPos + 20, 'No idle polecats available', {
+          font: '12px Fredoka',
+          fill: '#999999'
+        }).setOrigin(0.5)
+        this.reassignModal.add(noIdle)
+        yPos += 50
+      } else {
+        idlePolecats.slice(0, 4).forEach((p, i) => {
+          const btn = this.add.graphics()
+          this.drawButton(btn, -modalWidth/2 + 20, yPos, modalWidth - 40, 38, 0x3498DB, true)
+          const btnText = this.add.text(0, yPos + 19, p.name, {
+            font: 'bold 13px Fredoka',
+            fill: '#FFFFFF'
+          }).setOrigin(0.5)
+          const btnZone = this.add.zone(0, yPos + 19, modalWidth - 40, 38)
+          btnZone.setInteractive({ useHandCursor: true })
+          btnZone.on('pointerdown', () => {
+            cleanup()
+            resolve(p.name)
+          })
+          this.reassignModal.add([btn, btnText, btnZone])
+          yPos += 45
+        })
+      }
+
+      // Spawn new button
+      yPos += 10
+      const spawnBtn = this.add.graphics()
+      this.drawButton(spawnBtn, -modalWidth/2 + 20, yPos, modalWidth - 40, 38, 0x2ECC71, true)
+      const spawnText = this.add.text(0, yPos + 19, '+ SPAWN NEW POLECAT', {
+        font: 'bold 13px Fredoka',
+        fill: '#FFFFFF'
+      }).setOrigin(0.5)
+      const spawnZone = this.add.zone(0, yPos + 19, modalWidth - 40, 38)
+      spawnZone.setInteractive({ useHandCursor: true })
+      spawnZone.on('pointerdown', () => {
+        cleanup()
+        resolve('spawn_new')
+      })
+      this.reassignModal.add([spawnBtn, spawnText, spawnZone])
+
+      // Cancel button
+      yPos += 55
+      const cancelBtn = this.add.graphics()
+      this.drawButton(cancelBtn, -modalWidth/2 + 20, yPos, modalWidth - 40, 38, 0x95A5A6, true)
+      const cancelText = this.add.text(0, yPos + 19, 'CANCEL', {
+        font: 'bold 13px Fredoka',
+        fill: '#FFFFFF'
+      }).setOrigin(0.5)
+      const cancelZone = this.add.zone(0, yPos + 19, modalWidth - 40, 38)
+      cancelZone.setInteractive({ useHandCursor: true })
+      cancelZone.on('pointerdown', () => {
+        cleanup()
+        resolve(null)
+      })
+      this.reassignModal.add([cancelBtn, cancelText, cancelZone])
+
+      // Animate in
+      this.reassignModal.setScale(0.8)
+      this.reassignModal.setAlpha(0)
+      this.tweens.add({
+        targets: this.reassignModal,
+        scale: 1,
+        alpha: 1,
+        duration: 200,
+        ease: 'Back.easeOut'
+      })
+    })
+  }
+
+  async doMarkComplete(agentId) {
+    const confirm = await this.showModal({
+      title: 'MARK COMPLETE',
+      message: `Mark ${agentId}'s task as complete?\n\nThis will set the polecat to idle.`,
+      showCancel: true
+    })
+    if (!confirm) return
+
+    try {
+      this.statusText.setText('Completing...')
+      await this.api.markComplete(agentId)
+      this.statusText.setText(`${agentId} task complete!`)
+
+      // Show celebration
+      this.showCompletionCelebration()
+
+      this.showNotification('success', 'Task Completed!',
+        `${agentId} is now idle and ready for more work`)
+
+      if (this.gameScene) {
+        this.gameScene.refreshState()
+      }
+      this.hideSelectionCard()
+
+    } catch (e) {
+      this.statusText.setText('Failed to complete')
+      await this.showModal({
+        title: 'COMPLETION FAILED',
+        message: e.message,
+        showCancel: false
+      })
+    }
+  }
+
+  showCompletionCelebration() {
+    // Create confetti particles
+    const width = this.cameras.main.width
+    const height = this.cameras.main.height
+    const colors = [0xFF6B6B, 0x4ECDC4, 0xFFE66D, 0x95E1D3, 0xF38181, 0xAA96DA]
+
+    for (let i = 0; i < 50; i++) {
+      const x = width * 0.3 + Math.random() * width * 0.4
+      const y = -20
+
+      const confetti = this.add.graphics()
+      const color = colors[Math.floor(Math.random() * colors.length)]
+      confetti.fillStyle(color, 1)
+
+      if (Math.random() > 0.5) {
+        confetti.fillRect(0, 0, 8, 12)
+      } else {
+        confetti.fillCircle(0, 0, 5)
+      }
+
+      confetti.setPosition(x, y)
+      confetti.setDepth(2000)
+
+      this.tweens.add({
+        targets: confetti,
+        y: height + 50,
+        x: x + (Math.random() - 0.5) * 200,
+        angle: Math.random() * 720,
+        duration: 2000 + Math.random() * 1000,
+        delay: Math.random() * 500,
+        ease: 'Quad.easeIn',
+        onComplete: () => confetti.destroy()
+      })
+    }
+
+    // Play celebration sound
+    this.playNotificationSound('success')
   }
 
   // Mayor Chat Panel
@@ -1393,7 +2333,12 @@ export class UIScene extends Phaser.Scene {
     }
 
     if (lower.includes('help')) {
-      this.addMayorMessage('mayor', "I can help you with:\n\n• 'New project' - Create a village\n• 'Clone [url]' - Import a repo\n• 'Assign #123' - Give issue work\n• Describe a task - I'll create & assign it!\n• 'Spawn polecat' - New worker\n• 'List projects' - See all villages\n\nTry: \"Build a login page with OAuth\"")
+      this.addMayorMessage('mayor', "I can help you with:\n\n• 'New project' - Create a village\n• 'Clone [url]' - Import a repo\n• 'Assign #123' - Give issue work\n• Describe a task - I'll create & assign it!\n• 'Spawn polecat' - New worker\n• 'List projects' - See all villages\n• 'Status' - How are things going?\n\nTry: \"Build a login page with OAuth\"")
+      return
+    }
+
+    if (lower.includes('status') || lower.includes('how are things') || lower.includes('how\'s it going') || lower.includes('what\'s happening')) {
+      this.reportStatus()
       return
     }
 
@@ -1493,6 +2438,44 @@ export class UIScene extends Phaser.Scene {
     // Default response
     this.addMayorMessage('mayor', "I'm not sure what you mean. Try 'help' to see what I can do!")
     this.mayorState = null
+  }
+
+  // Report overall status
+  async reportStatus() {
+    try {
+      const status = await this.api.getStatus()
+      const polecats = status.polecats || []
+
+      const working = polecats.filter(p => p.status === 'working')
+      const stuck = polecats.filter(p => p.status === 'stuck')
+      const idle = polecats.filter(p => p.status === 'idle')
+
+      let message = ''
+
+      if (polecats.length === 0) {
+        message = "No polecats yet! Create a project and spawn some workers to get started."
+      } else {
+        message = `Town Status:\n\n`
+        message += `• ${working.length} polecat${working.length !== 1 ? 's' : ''} working\n`
+        message += `• ${idle.length} polecat${idle.length !== 1 ? 's' : ''} idle\n`
+
+        if (stuck.length > 0) {
+          message += `• ⚠️ ${stuck.length} polecat${stuck.length !== 1 ? 's' : ''} need help!\n\n`
+          message += `Stuck agents:\n`
+          stuck.forEach(p => {
+            message += `  - ${p.name} in ${p.rig}\n`
+          })
+        }
+
+        if (working.length > 0 && stuck.length === 0) {
+          message += `\nEveryone's making good progress!`
+        }
+      }
+
+      this.addMayorMessage('mayor', message)
+    } catch (e) {
+      this.addMayorMessage('mayor', `Couldn't get status: ${e.message}`)
+    }
   }
 
   // Auto-assign a task to the best available project and polecat
@@ -1677,9 +2660,21 @@ export class UIScene extends Phaser.Scene {
       btn.fillStyle(0xFFFFFF, 0.2)
       btn.fillRoundedRect(10, y + 2, width - 20, 10, { tl: 6, tr: 6, bl: 0, br: 0 })
 
-      // Label
-      const label = this.add.text(width/2, y + buttonHeight/2 - 1, village.name, {
-        font: 'bold 11px Fredoka',
+      // Status indicator dot (green=all idle, yellow=working, red=stuck)
+      const statusDot = this.add.graphics()
+      const villageStatus = this.getVillageStatus(village)
+      const dotColor = villageStatus === 'stuck' ? 0xE74C3C :
+                       villageStatus === 'working' ? 0xF39C12 : 0x2ECC71
+      statusDot.fillStyle(0x000000, 0.3)
+      statusDot.fillCircle(20, y + buttonHeight/2 + 1, 5)
+      statusDot.fillStyle(dotColor, 1)
+      statusDot.fillCircle(20, y + buttonHeight/2, 5)
+      statusDot.fillStyle(0xFFFFFF, 0.4)
+      statusDot.fillCircle(18, y + buttonHeight/2 - 2, 2)
+
+      // Label (offset to make room for status dot)
+      const label = this.add.text(width/2 + 5, y + buttonHeight/2 - 1, village.name, {
+        font: 'bold 10px Fredoka',
         fill: '#FFFFFF'
       }).setOrigin(0.5)
 
@@ -1725,11 +2720,27 @@ export class UIScene extends Phaser.Scene {
         }
       })
 
-      this.villageButtons.add([btn, label, count, zone])
+      this.villageButtons.add([btn, statusDot, label, count, zone])
     })
 
     // Reposition the navigator based on new height
     this.villageNav.setY(this.cameras.main.height - panelHeight - 80)
+  }
+
+  getVillageStatus(village) {
+    // Get all polecats in this village from game scene
+    // units is a Map, so convert to array
+    const unitsMap = this.gameScene?.units
+    if (!unitsMap) return 'idle'
+
+    const units = Array.from(unitsMap.values())
+    const villagePolecats = units.filter(u =>
+      village.polecats?.includes(u.unitName) || village.polecats?.includes(u.id)
+    )
+
+    if (villagePolecats.some(p => p.status === 'stuck')) return 'stuck'
+    if (villagePolecats.some(p => p.status === 'working')) return 'working'
+    return 'idle'
   }
 
   createNewProjectButton() {

@@ -93,4 +93,32 @@ export class GasTownAPI {
   async getCosts() {
     return this.request('/costs')
   }
+
+  // Get settings
+  async getSettings() {
+    return this.request('/settings')
+  }
+
+  // Update settings
+  async updateSettings(settings) {
+    return this.request('/settings', {
+      method: 'POST',
+      body: JSON.stringify(settings)
+    })
+  }
+
+  // Reassign work from one agent to another
+  async reassign(oldAgentId, newAgentId, rig = null) {
+    return this.request(`/agents/${oldAgentId}/reassign`, {
+      method: 'POST',
+      body: JSON.stringify({ newAgent: newAgentId, rig })
+    })
+  }
+
+  // Mark agent's task as complete
+  async markComplete(agentId) {
+    return this.request(`/agents/${agentId}/complete`, {
+      method: 'POST'
+    })
+  }
 }

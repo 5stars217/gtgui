@@ -210,4 +210,13 @@ export class MultiplayerServer {
   broadcastStateUpdate(data) {
     this.io.to('town').emit('state:update', { data })
   }
+
+  // Broadcast notification to all users
+  broadcastNotification(notification) {
+    this.io.to('town').emit('notification', {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      ...notification
+    })
+  }
 }

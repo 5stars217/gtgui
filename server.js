@@ -34,6 +34,141 @@ const multiplayer = new MultiplayerServer(httpServer, sessionMiddleware)
 const GT_PATH = process.env.GT_PATH || '/opt/homebrew/bin/gt'
 const TOWN_ROOT = process.env.TOWN_ROOT || `${process.env.HOME}/gt`
 
+// Settings storage
+const SETTINGS_FILE = join(TOWN_ROOT, 'settings.json')
+const DEFAULT_SETTINGS = {
+  stuckTokenThreshold: 25000,      // tokens before marked stuck
+  stuckTimeThreshold: 1800000,     // 30 minutes in ms
+  warningTokenThreshold: 20000,    // 80% - yellow warning
+  warningTimeThreshold: 1440000,   // 24 minutes - 80%
+  enableSounds: true,
+  enableNotifications: true
+}
+
+// Load settings from file or use defaults
+function loadSettings() {
+  try {
+    if (existsSync(SETTINGS_FILE)) {
+      const content = readFileSync(SETTINGS_FILE, 'utf-8')
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(content) }
+    }
+  } catch (e) {
+    console.error('Failed to load settings:', e.message)
+  }
+  return { ...DEFAULT_SETTINGS }
+}
+
+// Save settings to file
+function saveSettings(settings) {
+  try {
+    const dir = dirname(SETTINGS_FILE)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2))
+    return true
+  } catch (e) {
+    console.error('Failed to save settings:', e.message)
+    return false
+  }
+}
+
+let currentSettings = loadSettings()
+
+// Check for stuck agents based on token and time thresholds
+function checkForStuckAgents() {
+  const now = Date.now()
+  const rigs = listRigs()
+  const notifications = []
+
+  for (const rig of rigs) {
+    const polecatsPath = join(TOWN_ROOT, rig.name, 'polecats')
+
+    try {
+      const dirs = execSync(`ls -1 "${polecatsPath}" 2>/dev/null || true`, {
+        encoding: 'utf-8'
+      }).trim()
+
+      if (!dirs) continue
+
+      for (const name of dirs.split('\n').filter(Boolean)) {
+        const statusFile = join(polecatsPath, name, 'status.json')
+
+        try {
+          if (!existsSync(statusFile)) continue
+
+          const content = readFileSync(statusFile, 'utf-8')
+          const status = JSON.parse(content)
+
+          // Only check working agents
+          if (status.status !== 'working') continue
+
+          const assignedAt = status.assignedAt ? new Date(status.assignedAt).getTime() : now
+          const elapsed = now - assignedAt
+          const tokensUsed = status.tokensUsed || 0
+
+          // Check if either threshold exceeded
+          const timeExceeded = elapsed > currentSettings.stuckTimeThreshold
+          const tokensExceeded = tokensUsed > currentSettings.stuckTokenThreshold
+
+          if (timeExceeded || tokensExceeded) {
+            // Mark as stuck
+            status.status = 'stuck'
+            status.stuckReason = timeExceeded ? 'time' : 'tokens'
+            status.stuckAt = new Date().toISOString()
+            writeFileSync(statusFile, JSON.stringify(status, null, 2))
+
+            notifications.push({
+              type: 'stuck',
+              agent: name,
+              rig: rig.name,
+              reason: status.stuckReason,
+              elapsed,
+              tokensUsed,
+              message: timeExceeded
+                ? `${name} has been working for over ${Math.round(elapsed / 60000)} minutes`
+                : `${name} has used over ${tokensUsed.toLocaleString()} tokens`
+            })
+          }
+          // Check for warning thresholds (80%)
+          else {
+            const timeWarning = elapsed > currentSettings.warningTimeThreshold
+            const tokenWarning = tokensUsed > currentSettings.warningTokenThreshold
+
+            if ((timeWarning || tokenWarning) && !status.warningNotified) {
+              status.warningNotified = true
+              writeFileSync(statusFile, JSON.stringify(status, null, 2))
+
+              notifications.push({
+                type: 'warning',
+                agent: name,
+                rig: rig.name,
+                elapsed,
+                tokensUsed,
+                message: `${name} is approaching limits (${Math.round(elapsed / 60000)}min / ${tokensUsed} tokens)`
+              })
+            }
+          }
+        } catch (e) {
+          // Parse error, skip this polecat
+        }
+      }
+    } catch (e) {
+      // No polecats directory
+    }
+  }
+
+  // Broadcast notifications
+  for (const notification of notifications) {
+    multiplayer.broadcastNotification(notification)
+  }
+
+  return notifications
+}
+
+// Run stuck detection every 30 seconds
+setInterval(checkForStuckAgents, 30000)
+
 // Helper to run gt commands
 function gt(args, cwd = TOWN_ROOT) {
   try {
@@ -260,6 +395,31 @@ app.get('/api/rigs/:name/polecats', (req, res) => {
   res.json(polecats)
 })
 
+// DELETE /api/rigs/:name - Delete a rig (for testing cleanup)
+app.delete('/api/rigs/:name', (req, res) => {
+  const { name } = req.params
+
+  // Safety check - only allow deletion of test rigs
+  if (!name.startsWith('test-')) {
+    return res.status(403).json({ error: 'Can only delete test rigs (prefix: test-)' })
+  }
+
+  const rigPath = join(TOWN_ROOT, name)
+
+  try {
+    if (existsSync(rigPath)) {
+      execSync(`rm -rf "${rigPath}"`, { encoding: 'utf-8', shell: true })
+      multiplayer.broadcastStateUpdate({ event: 'rig:deleted', rig: name })
+      res.json({ success: true, deleted: name })
+    } else {
+      res.status(404).json({ error: 'Rig not found' })
+    }
+  } catch (e) {
+    console.error('Failed to delete rig:', e.message)
+    res.status(500).json({ error: 'Failed to delete rig' })
+  }
+})
+
 // GET /api/convoys - List convoys
 app.get('/api/convoys', (req, res) => {
   const convoys = gtJson('convoy list --all') || []
@@ -409,6 +569,206 @@ app.get('/api/costs', (req, res) => {
   res.json(costs || { total: 0, breakdown: [] })
 })
 
+// GET /api/settings - Get current settings
+app.get('/api/settings', (req, res) => {
+  res.json(currentSettings)
+})
+
+// POST /api/settings - Update settings
+app.post('/api/settings', (req, res) => {
+  const newSettings = { ...currentSettings, ...req.body }
+
+  // Validate thresholds
+  if (newSettings.stuckTokenThreshold < 1000) newSettings.stuckTokenThreshold = 1000
+  if (newSettings.stuckTokenThreshold > 500000) newSettings.stuckTokenThreshold = 500000
+  if (newSettings.stuckTimeThreshold < 60000) newSettings.stuckTimeThreshold = 60000  // Min 1 minute
+  if (newSettings.stuckTimeThreshold > 7200000) newSettings.stuckTimeThreshold = 7200000  // Max 2 hours
+
+  // Calculate warning thresholds as 80% of stuck thresholds
+  newSettings.warningTokenThreshold = Math.round(newSettings.stuckTokenThreshold * 0.8)
+  newSettings.warningTimeThreshold = Math.round(newSettings.stuckTimeThreshold * 0.8)
+
+  if (saveSettings(newSettings)) {
+    currentSettings = newSettings
+    multiplayer.broadcastStateUpdate({ event: 'settings:updated', settings: currentSettings })
+    res.json({ success: true, settings: currentSettings })
+  } else {
+    res.status(500).json({ error: 'Failed to save settings' })
+  }
+})
+
+// POST /api/agents/:id/reassign - Reassign work to another agent
+app.post('/api/agents/:id/reassign', (req, res) => {
+  const { newAgent, rig: targetRig } = req.body
+  const oldAgentId = req.params.id
+
+  if (!newAgent) {
+    return res.status(400).json({ error: 'New agent ID required' })
+  }
+
+  // Parse old agent ID
+  const oldParts = oldAgentId.split('/')
+  let oldRig, oldPolecat
+  if (oldParts.length >= 3) {
+    oldRig = oldParts[0]
+    oldPolecat = oldParts[oldParts.length - 1]
+  } else {
+    oldPolecat = oldAgentId
+    // Find the rig containing this polecat
+    const rigs = listRigs()
+    for (const r of rigs) {
+      const statusPath = join(TOWN_ROOT, r.name, 'polecats', oldPolecat, 'status.json')
+      if (existsSync(statusPath)) {
+        oldRig = r.name
+        break
+      }
+    }
+  }
+
+  if (!oldRig) {
+    return res.status(404).json({ error: 'Old agent not found' })
+  }
+
+  // Read old agent's current task
+  const oldStatusPath = join(TOWN_ROOT, oldRig, 'polecats', oldPolecat, 'status.json')
+  let oldStatus
+  try {
+    const content = readFileSync(oldStatusPath, 'utf-8')
+    oldStatus = JSON.parse(content)
+  } catch (e) {
+    return res.status(404).json({ error: 'Could not read old agent status' })
+  }
+
+  const task = oldStatus.issue || oldStatus.task
+  if (!task) {
+    return res.status(400).json({ error: 'Old agent has no task to reassign' })
+  }
+
+  // Parse new agent ID
+  const newParts = newAgent.split('/')
+  let newRig, newPolecat
+  if (newParts.length >= 3) {
+    newRig = newParts[0]
+    newPolecat = newParts[newParts.length - 1]
+  } else {
+    newPolecat = newAgent
+    newRig = targetRig || oldRig  // Default to same rig
+  }
+
+  // Update old agent to idle
+  const newOldStatus = {
+    status: 'idle',
+    previousTask: task,
+    reassignedAt: new Date().toISOString(),
+    reassignedTo: newPolecat
+  }
+  writeFileSync(oldStatusPath, JSON.stringify(newOldStatus, null, 2))
+
+  // Update new agent to working
+  const newStatusPath = join(TOWN_ROOT, newRig, 'polecats', newPolecat, 'status.json')
+  const newStatus = {
+    status: 'working',
+    issue: task,
+    assignedAt: new Date().toISOString(),
+    reassignedFrom: oldPolecat,
+    progress: 0
+  }
+
+  try {
+    const statusDir = dirname(newStatusPath)
+    if (!existsSync(statusDir)) {
+      mkdirSync(statusDir, { recursive: true })
+    }
+    writeFileSync(newStatusPath, JSON.stringify(newStatus, null, 2))
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to update new agent status' })
+  }
+
+  // Broadcast updates
+  multiplayer.broadcastStateUpdate({
+    event: 'polecat:reassigned',
+    from: { rig: oldRig, polecat: oldPolecat },
+    to: { rig: newRig, polecat: newPolecat },
+    task
+  })
+
+  multiplayer.broadcastNotification({
+    type: 'info',
+    message: `Task reassigned from ${oldPolecat} to ${newPolecat}`,
+    agent: newPolecat,
+    rig: newRig
+  })
+
+  res.json({
+    success: true,
+    message: `Reassigned "${task}" from ${oldPolecat} to ${newPolecat}`,
+    oldAgent: { rig: oldRig, polecat: oldPolecat, status: 'idle' },
+    newAgent: { rig: newRig, polecat: newPolecat, status: 'working', task }
+  })
+})
+
+// POST /api/agents/:id/complete - Mark task as complete (manual override)
+app.post('/api/agents/:id/complete', (req, res) => {
+  const agentId = req.params.id
+
+  // Parse agent ID
+  const parts = agentId.split('/')
+  let rigName, polecatName
+  if (parts.length >= 3) {
+    rigName = parts[0]
+    polecatName = parts[parts.length - 1]
+  } else {
+    polecatName = agentId
+    // Find the rig
+    const rigs = listRigs()
+    for (const r of rigs) {
+      const statusPath = join(TOWN_ROOT, r.name, 'polecats', polecatName, 'status.json')
+      if (existsSync(statusPath)) {
+        rigName = r.name
+        break
+      }
+    }
+  }
+
+  if (!rigName) {
+    return res.status(404).json({ error: 'Agent not found' })
+  }
+
+  const statusPath = join(TOWN_ROOT, rigName, 'polecats', polecatName, 'status.json')
+
+  try {
+    const content = readFileSync(statusPath, 'utf-8')
+    const oldStatus = JSON.parse(content)
+
+    const newStatus = {
+      status: 'idle',
+      completedTask: oldStatus.issue || oldStatus.task,
+      completedAt: new Date().toISOString(),
+      created: oldStatus.created
+    }
+
+    writeFileSync(statusPath, JSON.stringify(newStatus, null, 2))
+
+    multiplayer.broadcastStateUpdate({
+      event: 'polecat:completed',
+      rig: rigName,
+      polecat: polecatName,
+      task: oldStatus.issue
+    })
+
+    multiplayer.broadcastNotification({
+      type: 'success',
+      message: `${polecatName} completed: ${oldStatus.issue || 'task'}`,
+      agent: polecatName,
+      rig: rigName
+    })
+
+    res.json({ success: true, agent: polecatName, completedTask: oldStatus.issue })
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to mark complete: ' + e.message })
+  }
+})
+
 // GET /api/feed - Live activity feed (SSE)
 app.get('/api/feed', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream')
@@ -460,7 +820,11 @@ function getPolecatsForRig(rigName) {
         status: status.status || 'idle',
         issue: status.issue || null,
         assignedAt: status.assignedAt || null,
-        progress: status.progress || 0
+        progress: status.progress || 0,
+        tokensUsed: status.tokensUsed || 0,
+        stuckReason: status.stuckReason || null,
+        stuckAt: status.stuckAt || null,
+        created: status.created || null
       })
     }
   } catch (e) {
