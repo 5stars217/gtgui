@@ -1022,19 +1022,35 @@ export class UIScene extends Phaser.Scene {
 
   async doViewHook(agentId) {
     try {
-      this.statusText.setText('Loading hook...')
+      this.statusText.setText('Loading progress...')
       const result = await this.api.getHook(agentId)
-      const hook = result.hook || 'No active hook'
-      this.statusText.setText('Hook loaded')
+
+      let message = ''
+      if (result.hook) {
+        message += `Task: ${result.hook}\n\n`
+        message += `Status: ${result.status || 'unknown'}\n`
+        if (result.assignedAt) {
+          const assigned = new Date(result.assignedAt)
+          const elapsed = Math.round((Date.now() - assigned.getTime()) / 60000)
+          message += `Working for: ${elapsed} minutes\n`
+        }
+        if (result.progress !== undefined) {
+          message += `Progress: ${result.progress}%`
+        }
+      } else {
+        message = 'No active task - polecat is idle'
+      }
+
+      this.statusText.setText('Progress loaded')
       await this.showModal({
-        title: 'CURRENT HOOK',
-        message: `${agentId}:\n\n${hook}`,
+        title: 'POLECAT PROGRESS',
+        message: message,
         showCancel: false
       })
     } catch (e) {
-      this.statusText.setText('Failed to load hook')
+      this.statusText.setText('Failed to load progress')
       await this.showModal({
-        title: 'HOOK ERROR',
+        title: 'PROGRESS ERROR',
         message: e.message,
         showCancel: false
       })

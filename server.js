@@ -333,10 +333,54 @@ app.post('/api/mail/send', (req, res) => {
   }
 })
 
-// GET /api/agents/:id/hook - Get agent's current hook
+// GET /api/agents/:id/hook - Get agent's current task/status
 app.get('/api/agents/:id/hook', (req, res) => {
-  const result = gt(`hook --agent ${req.params.id}`)
-  res.json({ hook: result?.trim() || null })
+  // Parse agent ID - could be "rig/polecats/name" or just "name"
+  const agentId = req.params.id
+  const parts = agentId.split('/')
+
+  let rigName, polecatName
+  if (parts.length >= 3) {
+    rigName = parts[0]
+    polecatName = parts[parts.length - 1]
+  } else {
+    polecatName = agentId
+    // Search all rigs for this polecat
+    const rigs = listRigs()
+    for (const rig of rigs) {
+      const statusPath = join(TOWN_ROOT, rig.name, 'polecats', polecatName, 'status.json')
+      try {
+        const content = execSync(`cat "${statusPath}" 2>/dev/null`, { encoding: 'utf-8' })
+        const status = JSON.parse(content)
+        res.json({
+          hook: status.issue || status.task || null,
+          status: status.status,
+          assignedAt: status.assignedAt,
+          progress: status.progress || 0
+        })
+        return
+      } catch (e) {
+        // Not in this rig, continue
+      }
+    }
+    res.json({ hook: null, status: 'unknown' })
+    return
+  }
+
+  // Read status from file
+  const statusPath = join(TOWN_ROOT, rigName, 'polecats', polecatName, 'status.json')
+  try {
+    const content = execSync(`cat "${statusPath}" 2>/dev/null`, { encoding: 'utf-8' })
+    const status = JSON.parse(content)
+    res.json({
+      hook: status.issue || status.task || null,
+      status: status.status,
+      assignedAt: status.assignedAt,
+      progress: status.progress || 0
+    })
+  } catch (e) {
+    res.json({ hook: null, status: 'idle' })
+  }
 })
 
 // POST /api/agents/:id/stop - Emergency stop
