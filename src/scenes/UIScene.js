@@ -1239,6 +1239,11 @@ export class UIScene extends Phaser.Scene {
           this.sendMayorMessage()
         }
       })
+
+      // Prevent keyboard events from bubbling to Phaser
+      this.chatInput.addEventListener('keydown', (e) => {
+        e.stopPropagation()
+      })
     }
     this.chatInput.style.display = 'block'
     this.chatInput.focus()
@@ -1767,6 +1772,11 @@ export class UIScene extends Phaser.Scene {
             cleanup()
             resolve(inputValue)
           }
+        })
+
+        // Prevent keyboard events from bubbling to Phaser
+        inputEl.addEventListener('keydown', (e) => {
+          e.stopPropagation()
         })
 
         this.modal.inputEl = inputEl

@@ -276,6 +276,28 @@ export class GameScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.D
     })
 
+    // Disable Phaser keyboard capture when typing in inputs
+    // This prevents WASD from moving camera while typing
+    document.addEventListener('focusin', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        this.input.keyboard.enabled = false
+        this.keyboardDisabled = true
+      }
+    })
+
+    document.addEventListener('focusout', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        // Small delay to prevent re-enabling during focus switch between inputs
+        setTimeout(() => {
+          const active = document.activeElement
+          if (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA') {
+            this.input.keyboard.enabled = true
+            this.keyboardDisabled = false
+          }
+        }, 50)
+      }
+    })
+
     // Track if we're dragging to pan
     this.isPanning = false
 
