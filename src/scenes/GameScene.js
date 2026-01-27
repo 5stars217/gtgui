@@ -704,20 +704,63 @@ export class GameScene extends Phaser.Scene {
   }
 
   updateFromState(state) {
-    // Update from real Gas Town data
-    if (state.rigs) {
-      state.rigs.forEach((rig, i) => {
-        this.addBuilding(`rig-${rig.name}`, rig.name, 12 + i * 2, 7, 'building-rig')
+    // First create the central hub
+    this.addVillage('Town Center', null, 20, 20, true)
+
+    // Add rigs as villages around the hub
+    if (state.rigs && state.rigs.length > 0) {
+      // Filter out special rigs that are part of the hub
+      const hubRigs = ['mayor', 'deacon', 'refinery']
+      const projectRigs = state.rigs.filter(r => !hubRigs.includes(r.name))
+
+      projectRigs.forEach((rig, i) => {
+        // Position in a circle around the hub
+        const angle = (i * Math.PI * 2) / Math.max(projectRigs.length, 1) - Math.PI / 2
+        const radius = 10
+        const cx = 20 + Math.cos(angle) * radius
+        const cy = 20 + Math.sin(angle) * radius
+
+        // Choose building type based on name
+        let buildingType = 'building-rig'
+        if (rig.name.includes('test')) buildingType = 'building-barracks'
+
+        this.addBuilding(`rig-${rig.name}`, rig.name, Math.floor(cx), Math.floor(cy), buildingType)
+
+        // Track as village
+        this.villages.push({
+          name: rig.name,
+          centerX: Math.floor(cx),
+          centerY: Math.floor(cy),
+          isHub: false,
+          polecats: []
+        })
       })
     }
 
+    // Add polecats to their rigs
     if (state.polecats) {
       state.polecats.forEach((pc, i) => {
         const status = pc.status === 'working' ? 'unit-polecat-working' :
                        pc.status === 'stuck' ? 'unit-polecat-stuck' : 'unit-polecat-idle'
-        this.addUnit(`polecat-${pc.name}`, pc.name, 13 + i, 8 + i, status, pc.status)
+
+        // Find the village this polecat belongs to
+        const village = this.villages.find(v => v.name === pc.rig)
+        let gridX = 13 + i
+        let gridY = 8 + i
+
+        if (village) {
+          // Position near the village center
+          gridX = village.centerX + Phaser.Math.Between(-2, 2)
+          gridY = village.centerY + Phaser.Math.Between(-2, 2)
+          village.polecats.push(pc.name)
+        }
+
+        this.addUnit(`polecat-${pc.name}`, pc.name, gridX, gridY, status, pc.status)
       })
     }
+
+    // Emit event to update village navigator
+    this.events.emit('villageAdded', this.villages[0])
   }
 
   addBuilding(id, name, gridX, gridY, spriteKey) {
