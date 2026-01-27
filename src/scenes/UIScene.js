@@ -1198,7 +1198,7 @@ export class UIScene extends Phaser.Scene {
                         chatBg, this.chatMessages, inputBg, sendBtn, sendText, sendZone])
 
     // Add welcome message
-    this.addMayorMessage("mayor", "Welcome to Penguin Town! I'm the Mayor. I can help you:\n\n• Create new projects\n• Clone repos\n• Assign work to polecats\n\nWhat would you like to do?")
+    this.addMayorMessage("mayor", "Welcome to Penguin Town! I'm the Mayor. I can help you:\n\n• Create new projects\n• Clone repos\n• Describe what you need built - I'll create tasks!\n• Assign issue numbers or full specs\n\nJust tell me what you need!")
   }
 
   openMayorChat() {
@@ -1348,6 +1348,18 @@ export class UIScene extends Phaser.Scene {
       return
     }
 
+    // Handle spec/task descriptions - look for action words or longer text
+    if (lower.includes('build') || lower.includes('fix') || lower.includes('add') ||
+        lower.includes('create') || lower.includes('implement') || lower.includes('update') ||
+        lower.includes('make') || lower.includes('change') || lower.includes('write') ||
+        text.length > 50) {
+      // This looks like a spec - create a task from it
+      this.pendingSpec = text
+      this.addMayorMessage('mayor', `Got it! I'll create a task:\n\n"${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"\n\nWhich project should this be for?`)
+      this.mayorState = 'awaiting_spec_project'
+      return
+    }
+
     if (lower.includes('spawn') || lower.includes('new polecat') || lower.includes('create polecat')) {
       this.addMayorMessage('mayor', "I'll spawn a new polecat. Which project should they join?")
       this.mayorState = 'awaiting_spawn_project'
@@ -1366,7 +1378,7 @@ export class UIScene extends Phaser.Scene {
     }
 
     if (lower.includes('help')) {
-      this.addMayorMessage('mayor', "I can help you with:\n\n• 'New project' - Create a village\n• 'Clone [url]' - Import a repo\n• 'Assign #123' - Give work\n• 'Spawn polecat' - New worker\n• 'List projects' - See all villages")
+      this.addMayorMessage('mayor', "I can help you with:\n\n• 'New project' - Create a village\n• 'Clone [url]' - Import a repo\n• 'Assign #123' - Give issue work\n• Describe a task - I'll create & assign it!\n• 'Spawn polecat' - New worker\n• 'List projects' - See all villages\n\nTry: \"Build a login page with OAuth\"")
       return
     }
 
@@ -1483,9 +1495,165 @@ export class UIScene extends Phaser.Scene {
       return
     }
 
+    // Handle spec-based task creation flow
+    if (this.mayorState === 'awaiting_spec_project') {
+      // User is providing the project name for the spec
+      const projectName = text.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()
+
+      // Check if project exists in villages
+      const villages = this.gameScene?.villages || []
+      const existingProject = villages.find(v => v.name.toLowerCase() === projectName)
+
+      if (!existingProject) {
+        // Project doesn't exist - offer to create it
+        this.addMayorMessage('mayor', `I don't see a project called "${projectName}". Would you like me to create it first? (yes/no)`)
+        this.pendingSpecProject = projectName
+        this.mayorState = 'awaiting_spec_create_confirm'
+        return
+      }
+
+      // Project exists - find polecats
+      this.currentProject = projectName
+      try {
+        const polecats = await this.api.getPolecats(projectName)
+        if (polecats.length === 0) {
+          this.addMayorMessage('mayor', `"${projectName}" has no polecats yet. Shall I spawn one to work on this task? (yes/no)`)
+          this.mayorState = 'awaiting_spec_spawn_confirm'
+        } else if (polecats.length === 1) {
+          // Auto-assign to the only polecat
+          this.currentPolecat = polecats[0].name
+          await this.slingSpecToPolecat()
+        } else {
+          // Multiple polecats - let user choose
+          const list = polecats.map((p, i) => `${i + 1}. ${p.name} (${p.status})`).join('\n')
+          this.addMayorMessage('mayor', `Which polecat should work on this?\n\n${list}\n\n(Enter name or number)`)
+          this.availablePolecats = polecats
+          this.mayorState = 'awaiting_spec_polecat'
+        }
+      } catch (e) {
+        this.addMayorMessage('mayor', `Error getting polecats: ${e.message}`)
+        this.mayorState = null
+      }
+      return
+    }
+
+    if (this.mayorState === 'awaiting_spec_create_confirm') {
+      if (lower.includes('yes') || lower.includes('sure') || lower.includes('ok') || lower.includes('y')) {
+        this.addMayorMessage('mayor', `Creating "${this.pendingSpecProject}"...`)
+        try {
+          await this.api.createRig(this.pendingSpecProject)
+          if (this.gameScene) {
+            this.gameScene.addVillage(this.pendingSpecProject)
+          }
+          this.currentProject = this.pendingSpecProject
+          this.addMayorMessage('mayor', `Done! Now I'll spawn a polecat to work on your task...`)
+
+          // Spawn a polecat and assign the spec
+          const result = await this.api.spawnPolecat(this.currentProject)
+          if (this.gameScene) {
+            this.gameScene.addPolecatToVillage(this.currentProject, result.name)
+          }
+          this.currentPolecat = result.name
+          await this.slingSpecToPolecat()
+        } catch (e) {
+          this.addMayorMessage('mayor', `Failed: ${e.message}`)
+          this.mayorState = null
+        }
+      } else {
+        this.addMayorMessage('mayor', "No problem! Which existing project should I use for this task?")
+        this.mayorState = 'awaiting_spec_project'
+      }
+      return
+    }
+
+    if (this.mayorState === 'awaiting_spec_spawn_confirm') {
+      if (lower.includes('yes') || lower.includes('sure') || lower.includes('ok') || lower.includes('y')) {
+        this.addMayorMessage('mayor', "Spawning a polecat...")
+        try {
+          const result = await this.api.spawnPolecat(this.currentProject)
+          if (this.gameScene) {
+            this.gameScene.addPolecatToVillage(this.currentProject, result.name)
+          }
+          this.currentPolecat = result.name
+          await this.slingSpecToPolecat()
+        } catch (e) {
+          this.addMayorMessage('mayor', `Spawn failed: ${e.message}`)
+          this.mayorState = null
+        }
+      } else {
+        this.addMayorMessage('mayor', "Alright, the task is saved. Let me know when you have a polecat ready!")
+        this.mayorState = null
+      }
+      return
+    }
+
+    if (this.mayorState === 'awaiting_spec_polecat') {
+      // User is selecting which polecat to assign the spec to
+      const polecats = this.availablePolecats || []
+
+      // Try to match by number
+      const numMatch = text.match(/^(\d+)$/)
+      if (numMatch) {
+        const idx = parseInt(numMatch[1]) - 1
+        if (idx >= 0 && idx < polecats.length) {
+          this.currentPolecat = polecats[idx].name
+          await this.slingSpecToPolecat()
+          return
+        }
+      }
+
+      // Try to match by name
+      const matchedPolecat = polecats.find(p =>
+        p.name.toLowerCase().includes(lower) || lower.includes(p.name.toLowerCase())
+      )
+      if (matchedPolecat) {
+        this.currentPolecat = matchedPolecat.name
+        await this.slingSpecToPolecat()
+        return
+      }
+
+      this.addMayorMessage('mayor', "I didn't recognize that polecat. Please enter the number or name from the list.")
+      return
+    }
+
     // Default response
     this.addMayorMessage('mayor', "I'm not sure what you mean. Try 'help' to see what I can do!")
     this.mayorState = null
+  }
+
+  // Helper to sling the pending spec to the current polecat
+  async slingSpecToPolecat() {
+    if (!this.pendingSpec || !this.currentPolecat || !this.currentProject) {
+      this.addMayorMessage('mayor', "Something went wrong - missing task details. Please try again.")
+      this.mayorState = null
+      return
+    }
+
+    this.addMayorMessage('mayor', `Assigning task to ${this.currentPolecat}...\n\n"${this.pendingSpec.substring(0, 80)}${this.pendingSpec.length > 80 ? '...' : ''}"`)
+
+    try {
+      // Use the spec as the "issue" - the sling endpoint accepts any string
+      await this.api.sling(
+        `${this.currentProject}/polecats/${this.currentPolecat}`,
+        this.pendingSpec
+      )
+
+      this.addMayorMessage('mayor', `${this.currentPolecat} is now working on your task!\n\nI'll let you know when they make progress or if they get stuck.`)
+
+      if (this.gameScene) {
+        this.gameScene.refreshState()
+      }
+
+      // Clear pending state
+      this.pendingSpec = null
+      this.currentPolecat = null
+      this.currentProject = null
+      this.mayorState = null
+
+    } catch (e) {
+      this.addMayorMessage('mayor', `Failed to assign task: ${e.message}\n\nTry again or check if the polecat is available.`)
+      this.mayorState = null
+    }
   }
 
   handleResize(gameSize) {
