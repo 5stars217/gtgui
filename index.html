@@ -3,26 +3,242 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gas Town</title>
+  <title>Club Penguin Town</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #1a1a2e;
+      background: linear-gradient(180deg, #87CEEB 0%, #B0E0E6 50%, #E0F4FF 100%);
       overflow: hidden;
-      font-family: 'Press Start 2P', monospace;
+      font-family: 'Fredoka', sans-serif;
     }
     #game-container {
       width: 100vw;
       height: 100vh;
     }
-    @font-face {
-      font-family: 'Press Start 2P';
-      src: url('https://fonts.gstatic.com/s/pressstart2p/v15/e3t4euO8T-267oIAQAu6jDQyK3nVivM.woff2') format('woff2');
+
+    /* Login Overlay */
+    #login-overlay {
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(180deg, #87CEEB 0%, #B0E0E6 50%, #E0F4FF 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
+    #login-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .login-card {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 24px;
+      padding: 48px;
+      box-shadow: 0 8px 32px rgba(0, 119, 182, 0.2);
+      text-align: center;
+      max-width: 400px;
+      border: 3px solid #0077B6;
+    }
+    .login-title {
+      font-size: 32px;
+      font-weight: 700;
+      color: #0077B6;
+      margin-bottom: 8px;
+    }
+    .login-subtitle {
+      font-size: 16px;
+      color: #5BA3C6;
+      margin-bottom: 32px;
+    }
+    .login-penguin {
+      font-size: 64px;
+      margin-bottom: 24px;
+    }
+    .login-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: #24292e;
+      color: white;
+      font-family: 'Fredoka', sans-serif;
+      font-size: 18px;
+      font-weight: 600;
+      padding: 16px 32px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+    }
+    .login-btn:hover {
+      background: #1a1f24;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+    .login-btn svg {
+      width: 24px;
+      height: 24px;
+    }
+    .login-divider {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 24px 0;
+      color: #5BA3C6;
+    }
+    .login-divider::before,
+    .login-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #B0E0E6;
+    }
+    .dev-login {
+      display: flex;
+      gap: 8px;
+    }
+    .dev-login input {
+      flex: 1;
+      padding: 12px 16px;
+      font-family: 'Fredoka', sans-serif;
+      font-size: 16px;
+      border: 2px solid #B0E0E6;
+      border-radius: 8px;
+      outline: none;
+    }
+    .dev-login input:focus {
+      border-color: #0077B6;
+    }
+    .dev-login button {
+      background: #2ECC71;
+      color: white;
+      font-family: 'Fredoka', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .dev-login button:hover {
+      background: #27AE60;
+    }
+    .dev-note {
+      font-size: 12px;
+      color: #888;
+      margin-top: 8px;
+    }
+    .login-error {
+      background: #FDEAEA;
+      color: #E74C3C;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .login-error.visible {
+      display: block;
     }
   </style>
 </head>
 <body>
+  <!-- Login Overlay -->
+  <div id="login-overlay">
+    <div class="login-card">
+      <div class="login-penguin">&#129427;</div>
+      <h1 class="login-title">Club Penguin Town</h1>
+      <p class="login-subtitle">Multiplayer Gastown Swarm</p>
+
+      <div id="login-error" class="login-error"></div>
+
+      <a href="/auth/github" class="login-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        Sign in with GitHub
+      </a>
+
+      <div class="login-divider">or dev mode</div>
+
+      <div class="dev-login">
+        <input type="text" id="dev-username" placeholder="Enter username" />
+        <button onclick="devLogin()">Join</button>
+      </div>
+      <p class="dev-note">Dev mode - no GitHub required</p>
+    </div>
+  </div>
+
   <div id="game-container"></div>
+
+  <script>
+    // Check if already logged in
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/me', { credentials: 'include' })
+        if (res.ok) {
+          const user = await res.json()
+          window.currentUser = user
+          hideLoginOverlay()
+        }
+      } catch (e) {
+        // Not logged in, show login
+      }
+    }
+
+    // Dev mode login
+    async function devLogin() {
+      const username = document.getElementById('dev-username').value.trim()
+      if (!username) {
+        showError('Please enter a username')
+        return
+      }
+
+      try {
+        const res = await fetch('/auth/dev-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ username })
+        })
+
+        if (res.ok) {
+          const user = await res.json()
+          window.currentUser = user
+          hideLoginOverlay()
+        } else {
+          const data = await res.json()
+          showError(data.error || 'Login failed')
+        }
+      } catch (e) {
+        showError('Connection error')
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('login-error')
+      el.textContent = msg
+      el.classList.add('visible')
+    }
+
+    function hideLoginOverlay() {
+      document.getElementById('login-overlay').classList.add('hidden')
+    }
+
+    // Enter key to submit dev login
+    document.getElementById('dev-username').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') devLogin()
+    })
+
+    // Check auth on load
+    checkAuth()
+  </script>
+
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

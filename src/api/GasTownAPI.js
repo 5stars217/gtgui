@@ -29,6 +29,30 @@ export class GasTownAPI {
     return this.request('/rigs')
   }
 
+  // Create a new rig
+  async createRig(name) {
+    return this.request('/rigs', {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    })
+  }
+
+  // Clone a repo into a rig
+  async cloneRepo(rigName, repo, branch = null) {
+    return this.request(`/rigs/${rigName}/clone`, {
+      method: 'POST',
+      body: JSON.stringify({ repo, branch })
+    })
+  }
+
+  // Spawn a polecat in a rig
+  async spawnPolecat(rigName, polecatName = null) {
+    return this.request(`/rigs/${rigName}/polecats`, {
+      method: 'POST',
+      body: JSON.stringify({ polecatName })
+    })
+  }
+
   // Get polecats for a rig
   async getPolecats(rigName) {
     return this.request(`/rigs/${rigName}/polecats`)

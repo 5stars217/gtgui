@@ -1,21 +1,36 @@
 import express from 'express'
 import cors from 'cors'
+import { createServer } from 'http'
 import { execSync, exec } from 'child_process'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { setupAuth, getSessionMiddleware } from './src/server/auth.js'
+import { MultiplayerServer } from './src/server/multiplayer.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 const app = express()
-app.use(cors())
+const httpServer = createServer(app)
+
+app.use(cors({
+  origin: true,
+  credentials: true
+}))
 
 // Only parse JSON for API routes
 app.use('/api', express.json({ limit: '1mb' }))
+app.use('/auth', express.json())
 
-// Static files served AFTER API routes are defined
+// Setup authentication
+const sessionMiddleware = getSessionMiddleware()
+app.use(sessionMiddleware)
+const { users: authUsers } = setupAuth(app)
 
-const GT_PATH = process.env.GT_PATH || `${process.env.HOME}/go/bin/gt`
+// Setup multiplayer WebSocket
+const multiplayer = new MultiplayerServer(httpServer, sessionMiddleware)
+
+const GT_PATH = process.env.GT_PATH || '/opt/homebrew/bin/gt'
 const TOWN_ROOT = process.env.TOWN_ROOT || `${process.env.HOME}/gt`
 
 // Helper to run gt commands
@@ -24,7 +39,9 @@ function gt(args, cwd = TOWN_ROOT) {
     const result = execSync(`${GT_PATH} ${args}`, {
       cwd,
       encoding: 'utf-8',
-      timeout: 10000
+      timeout: 30000,
+      shell: true,  // Use default shell
+      env: { ...process.env, GT_TOWN_ROOT: TOWN_ROOT }
     })
     return result
   } catch (e) {
@@ -70,6 +87,9 @@ app.get('/api/status', (req, res) => {
   status.tokens = 0
   status.openIssues = status.polecats.filter(p => p.hook).length
 
+  // Broadcast state update to connected clients
+  multiplayer.broadcastStateUpdate(status)
+
   res.json(status)
 })
 
@@ -77,6 +97,86 @@ app.get('/api/status', (req, res) => {
 app.get('/api/rigs', (req, res) => {
   const rigs = gtJson('rig list') || []
   res.json(rigs)
+})
+
+// POST /api/rigs - Create a new rig
+app.post('/api/rigs', (req, res) => {
+  const { name } = req.body
+  if (!name) {
+    return res.status(400).json({ error: 'Rig name required' })
+  }
+
+  // Validate name (alphanumeric, dashes, underscores only)
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    return res.status(400).json({ error: 'Invalid rig name. Use alphanumeric, dashes, or underscores.' })
+  }
+
+  const result = gt(`rig create ${name}`)
+  if (result !== null) {
+    // Broadcast new rig to all connected users
+    multiplayer.broadcastStateUpdate({ event: 'rig:created', rig: name })
+    res.json({ success: true, name })
+  } else {
+    res.status(500).json({ error: 'Failed to create rig' })
+  }
+})
+
+// POST /api/rigs/:name/clone - Clone a repo into a rig
+app.post('/api/rigs/:name/clone', (req, res) => {
+  const { name } = req.params
+  const { repo, branch } = req.body
+
+  if (!repo) {
+    return res.status(400).json({ error: 'Repository URL required' })
+  }
+
+  // Ensure rig directory exists
+  const rigPath = join(TOWN_ROOT, name)
+  try {
+    execSync(`mkdir -p "${rigPath}"`, { encoding: 'utf-8', shell: true })
+  } catch (e) {
+    console.error('Failed to create rig directory:', e.message)
+    return res.status(500).json({ error: 'Failed to create rig directory' })
+  }
+
+  // Try gt clone first, fallback to git clone
+  const branchArg = branch ? `--branch ${branch}` : ''
+  let result = gt(`clone ${repo} ${branchArg}`, rigPath)
+
+  // Fallback to direct git clone if gt clone fails
+  if (result === null) {
+    try {
+      const gitBranchArg = branch ? `-b ${branch}` : ''
+      result = execSync(`git clone ${gitBranchArg} "${repo}" .`, {
+        cwd: rigPath,
+        encoding: 'utf-8',
+        timeout: 120000,  // 2 min timeout for large repos
+        shell: true
+      })
+    } catch (e) {
+      console.error('Git clone failed:', e.message)
+      return res.status(500).json({ error: `Failed to clone: ${e.message}` })
+    }
+  }
+
+  multiplayer.broadcastStateUpdate({ event: 'repo:cloned', rig: name, repo })
+  res.json({ success: true, repo })
+})
+
+// POST /api/rigs/:name/polecats - Spawn a new polecat in a rig
+app.post('/api/rigs/:name/polecats', (req, res) => {
+  const { name } = req.params
+  const { polecatName } = req.body
+
+  const pcName = polecatName || `polecat-${Date.now()}`
+  const result = gt(`polecat spawn ${pcName}`, join(TOWN_ROOT, name))
+
+  if (result !== null) {
+    multiplayer.broadcastStateUpdate({ event: 'polecat:spawned', rig: name, polecat: pcName })
+    res.json({ success: true, name: pcName })
+  } else {
+    res.status(500).json({ error: 'Failed to spawn polecat' })
+  }
 })
 
 // GET /api/rigs/:name/polecats - Get polecats for a rig
@@ -220,8 +320,14 @@ app.use((err, req, res, next) => {
 })
 
 const PORT = process.env.PORT || 8080
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Gas Town UI server running at http://localhost:${PORT}`)
   console.log(`Town root: ${TOWN_ROOT}`)
   console.log(`GT binary: ${GT_PATH}`)
+  console.log(`WebSocket enabled for multiplayer`)
+  if (!process.env.GITHUB_CLIENT_ID) {
+    console.log(`GitHub OAuth: Not configured (dev mode enabled)`)
+  } else {
+    console.log(`GitHub OAuth: Configured`)
+  }
 })
