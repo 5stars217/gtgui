@@ -61,31 +61,59 @@ function gtJson(args, cwd = TOWN_ROOT) {
   }
 }
 
+// Helper to list rigs from directory
+function listRigs() {
+  try {
+    const dirs = execSync(`ls -1 "${TOWN_ROOT}" 2>/dev/null || true`, {
+      encoding: 'utf-8'
+    }).trim()
+
+    if (!dirs) return []
+
+    // Filter to only directories that look like rigs (not hidden, not special)
+    const rigs = []
+    for (const name of dirs.split('\n').filter(Boolean)) {
+      if (name.startsWith('.') || name === 'plugins' || name === 'settings') continue
+      const rigPath = join(TOWN_ROOT, name)
+      try {
+        const stat = execSync(`test -d "${rigPath}" && echo "dir" || echo "file"`, {
+          encoding: 'utf-8'
+        }).trim()
+        if (stat === 'dir') {
+          rigs.push({ name, path: rigPath })
+        }
+      } catch (e) {
+        // Skip
+      }
+    }
+    return rigs
+  } catch (e) {
+    return []
+  }
+}
+
 // GET /api/status - Overall town status
 app.get('/api/status', (req, res) => {
   const status = {}
 
-  // Get rig list
-  const rigs = gtJson('rig list')
-  status.rigs = rigs || []
+  // Get rig list from directory
+  const rigs = listRigs()
+  status.rigs = rigs
 
-  // Get convoy status
-  const convoys = gtJson('convoy list')
-  status.activeConvoys = convoys?.length || 0
-  status.convoys = convoys || []
+  // Get convoy status (skip if gt doesn't support it)
+  status.activeConvoys = 0
+  status.convoys = []
 
   // Get polecats across all rigs
   status.polecats = []
-  if (rigs) {
-    for (const rig of rigs) {
-      const polecats = getPolecatsForRig(rig.name || rig)
-      status.polecats.push(...polecats)
-    }
+  for (const rig of rigs) {
+    const polecats = getPolecatsForRig(rig.name)
+    status.polecats.push(...polecats)
   }
 
   // Placeholder for tokens (would come from costs)
   status.tokens = 0
-  status.openIssues = status.polecats.filter(p => p.hook).length
+  status.openIssues = status.polecats.filter(p => p.status === 'stuck').length
 
   // Broadcast state update to connected clients
   multiplayer.broadcastStateUpdate(status)
@@ -95,7 +123,7 @@ app.get('/api/status', (req, res) => {
 
 // GET /api/rigs - List all rigs
 app.get('/api/rigs', (req, res) => {
-  const rigs = gtJson('rig list') || []
+  const rigs = listRigs()
   res.json(rigs)
 })
 
