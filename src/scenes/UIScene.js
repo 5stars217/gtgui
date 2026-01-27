@@ -1524,17 +1524,20 @@ export class UIScene extends Phaser.Scene {
     try {
       const polecats = await this.api.getPolecats(this.currentProject)
 
-      if (polecats.length === 0) {
-        // Spawn a polecat
+      // Find an idle polecat
+      const idlePolecat = polecats.find(p => p.status === 'idle')
+
+      if (idlePolecat) {
+        // Use the idle polecat
+        this.currentPolecat = idlePolecat.name
+      } else {
+        // No idle polecats - spawn a new one to handle this task
+        this.addMayorMessage('mayor', `All polecats are busy. Spawning a new one...`)
         const result = await this.api.spawnPolecat(this.currentProject)
         if (this.gameScene) {
           this.gameScene.addPolecatToVillage(this.currentProject, result.name)
         }
         this.currentPolecat = result.name
-      } else {
-        // Find an idle polecat or use the first one
-        const idlePolecat = polecats.find(p => p.status === 'idle')
-        this.currentPolecat = idlePolecat ? idlePolecat.name : polecats[0].name
       }
 
       await this.slingSpecToPolecat()
