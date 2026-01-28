@@ -1196,78 +1196,79 @@ export class GameScene extends Phaser.Scene {
     const unitId = unit.id
     const unitName = unit.unitName
 
-    // Create sea lion emerging from below
-    const seaLion = this.add.image(unitX - 60, unitY + 80, 'sea-lion')
+    console.log('Sea lion attack!', { unitX, unitY, unitId, unitName })
+
+    // Create sea lion emerging from below - add directly to scene with high depth
+    const seaLion = this.add.image(unitX, unitY + 80, 'sea-lion')
     seaLion.setOrigin(0.5, 1)
-    seaLion.setScale(0.5)
-    seaLion.setAlpha(0)
-    seaLion.setDepth(600)
-    this.effectsLayer.add(seaLion)
+    seaLion.setScale(3.0)
+    seaLion.setDepth(9999)
 
     // Water splash effect
     const splash = this.add.graphics()
-    splash.setPosition(unitX - 40, unitY + 40)
-    splash.setAlpha(0)
-    splash.setDepth(599)
-    this.effectsLayer.add(splash)
+    splash.setPosition(unitX, unitY + 60)
+    splash.setDepth(9998)
+    splash.fillStyle(0x3498DB, 0.8)
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2
+      const dist = 20 + Math.random() * 15
+      splash.fillCircle(Math.cos(angle) * dist, Math.sin(angle) * dist, 6 + Math.random() * 4)
+    }
 
     // Animation sequence
     // 1. Sea lion emerges with splash
     this.tweens.add({
       targets: seaLion,
-      y: unitY + 20,
-      alpha: 1,
-      scale: 1.2,
+      y: unitY - 10,
+      scale: 5.0,
+      duration: 500,
+      ease: 'Back.easeOut'
+    })
+
+    // Splash fades
+    this.tweens.add({
+      targets: splash,
+      alpha: 0,
       duration: 400,
-      ease: 'Back.easeOut',
-      onStart: () => {
-        // Draw water splash
-        splash.setAlpha(1)
-        splash.fillStyle(0x3498DB, 0.7)
-        for (let i = 0; i < 8; i++) {
-          const angle = (i / 8) * Math.PI * 2
-          const dist = 15 + Math.random() * 10
-          splash.fillCircle(Math.cos(angle) * dist, Math.sin(angle) * dist, 4 + Math.random() * 3)
-        }
-      }
+      delay: 300
     })
 
     // 2. Sea lion lunges at penguin
     this.tweens.add({
       targets: seaLion,
-      x: unitX + 10,
-      y: unitY - 5,
-      duration: 250,
-      delay: 450,
+      x: unitX + 20,
+      y: unitY - 20,
+      duration: 300,
+      delay: 550,
       ease: 'Power3'
     })
 
     // 3. Penguin shakes in terror
     this.tweens.add({
       targets: unit.sprite,
-      x: { from: -4, to: 4 },
-      duration: 40,
-      delay: 450,
+      x: { from: -6, to: 6 },
+      duration: 50,
+      delay: 550,
       yoyo: true,
-      repeat: 5,
+      repeat: 6,
       ease: 'Linear'
     })
 
     // 4. Sea lion grabs penguin and drags it down!
     this.tweens.add({
       targets: [seaLion, unit],
-      y: unitY + 120,
-      duration: 500,
-      delay: 750,
+      y: unitY + 150,
+      duration: 600,
+      delay: 900,
       ease: 'Power2'
     })
 
     // Penguin spins as it's dragged
     this.tweens.add({
       targets: unit.sprite,
-      angle: 360,
-      duration: 500,
-      delay: 750,
+      angle: 720,
+      duration: 600,
+      delay: 900,
       ease: 'Linear'
     })
 
@@ -1275,10 +1276,11 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({
       targets: [seaLion, unit],
       alpha: 0,
-      duration: 400,
-      delay: 900,
+      duration: 500,
+      delay: 1100,
       onComplete: () => {
         seaLion.destroy()
+        splash.destroy()
         // Remove the unit from the game
         this.units.delete(unitId)
         unit.destroy()

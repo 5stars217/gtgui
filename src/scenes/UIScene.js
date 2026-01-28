@@ -342,7 +342,7 @@ export class UIScene extends Phaser.Scene {
       })
     })
 
-    zone.on('pointerdown', () => this.showSettingsPanel())
+    zone.on('pointerup', () => this.showSettingsPanel())
 
     this.settingsBtn.add([bg, icon, zone])
   }
@@ -351,7 +351,7 @@ export class UIScene extends Phaser.Scene {
     const width = this.cameras.main.width
     const height = this.cameras.main.height
     const panelWidth = 400
-    const panelHeight = 380
+    const panelHeight = 500
 
     this.settingsPanel = this.add.container(width/2, height/2)
     this.settingsPanel.setDepth(1000)
@@ -384,7 +384,7 @@ export class UIScene extends Phaser.Scene {
       fill: '#FFFFFF'
     }).setOrigin(0.5)
     closeBtn.setInteractive({ useHandCursor: true })
-    closeBtn.on('pointerdown', () => {
+    closeBtn.on('pointerup', () => {
       this.settingsPanel.destroy()
       this.settingsPanel = null
     })
@@ -408,9 +408,41 @@ export class UIScene extends Phaser.Scene {
 
     // Notification toggle
     this.addSettingToggle('Show Notifications', 'enableNotifications', yPos)
-    yPos += 70
+    yPos += 50
+
+    // Divider line
+    const divider = this.add.graphics()
+    divider.lineStyle(2, 0xE0E0E0, 1)
+    divider.lineBetween(-panelWidth/2 + 25, yPos, panelWidth/2 - 25, yPos)
+    this.settingsPanel.add(divider)
+    yPos += 20
+
+    // Debug section header
+    const debugHeader = this.add.text(0, yPos, '🦭 DEBUG TOOLS', {
+      font: 'bold 14px Fredoka',
+      fill: '#E67E22'
+    }).setOrigin(0.5)
+    this.settingsPanel.add(debugHeader)
+    yPos += 35
+
+    // Simulate Stuck button
+    const stuckBtn = this.add.graphics()
+    this.drawButton(stuckBtn, -150, yPos, 140, 40, 0xE67E22, true)
+    const stuckText = this.add.text(-80, yPos + 20, 'SEA LION', {
+      font: 'bold 14px Fredoka',
+      fill: '#FFFFFF'
+    }).setOrigin(0.5)
+    const stuckZone = this.add.zone(-80, yPos + 20, 140, 40)
+    stuckZone.setInteractive({ useHandCursor: true })
+    stuckZone.on('pointerup', () => {
+      this.settingsPanel.destroy()
+      this.settingsPanel = null
+      this.showSimulateStuckPicker()
+    })
+    this.settingsPanel.add([stuckBtn, stuckText, stuckZone])
 
     // Save button
+    yPos += 60
     const saveBtn = this.add.graphics()
     this.drawButton(saveBtn, -80, yPos, 160, 44, 0x2ECC71, true)
     const saveText = this.add.text(0, yPos + 22, 'SAVE', {
@@ -419,7 +451,7 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0.5)
     const saveZone = this.add.zone(0, yPos + 22, 160, 44)
     saveZone.setInteractive({ useHandCursor: true })
-    saveZone.on('pointerdown', () => {
+    saveZone.on('pointerup', () => {
       this.saveSettings()
       this.showNotification('success', 'Settings Saved', 'Your preferences have been updated')
       this.settingsPanel.destroy()
@@ -538,7 +570,7 @@ export class UIScene extends Phaser.Scene {
 
     const zone = this.add.zone(125, y + 18, 60, 30)
     zone.setInteractive({ useHandCursor: true })
-    zone.on('pointerdown', () => {
+    zone.on('pointerup', () => {
       this.settings[key] = !this.settings[key]
       drawToggle()
     })
@@ -1700,6 +1732,159 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
+  async showSimulateStuckPicker() {
+    // Fetch all polecats from all rigs
+    try {
+      const status = await this.api.getStatus()
+      const polecats = status.polecats || []
+
+      if (polecats.length === 0) {
+        await this.showModal({
+          title: 'NO POLECATS',
+          message: 'Spawn some polecats first to test the sea lion attack!',
+          showCancel: false
+        })
+        return
+      }
+
+      // Show picker modal
+      const width = this.cameras.main.width
+      const height = this.cameras.main.height
+      const panelWidth = 350
+      const panelHeight = Math.min(400, 150 + polecats.length * 55)
+
+      const picker = this.add.container(width/2, height/2)
+      picker.setDepth(1000)
+
+      // Backdrop
+      const backdrop = this.add.graphics()
+      backdrop.fillStyle(0x000000, 0.6)
+      backdrop.fillRect(-width/2, -height/2, width, height)
+      backdrop.setInteractive(new Phaser.Geom.Rectangle(-width/2, -height/2, width, height), Phaser.Geom.Rectangle.Contains)
+      backdrop.on('pointerup', () => {
+        picker.destroy()
+      })
+
+      // Panel
+      const panel = this.add.graphics()
+      this.drawGlossyPanel(panel, -panelWidth/2, -panelHeight/2, panelWidth, panelHeight, 0xE67E22, 20)
+      panel.fillStyle(0xFFFFFF, 0.98)
+      panel.fillRoundedRect(-panelWidth/2 + 10, -panelHeight/2 + 60, panelWidth - 20, panelHeight - 80, 12)
+
+      // Title
+      const title = this.add.text(0, -panelHeight/2 + 30, '🦭 SUMMON SEA LION', {
+        font: 'bold 18px Fredoka',
+        fill: '#FFFFFF',
+        stroke: '#C0392B',
+        strokeThickness: 2
+      }).setOrigin(0.5)
+
+      // Subtitle
+      const subtitle = this.add.text(0, -panelHeight/2 + 75, 'Pick a polecat to test stuck detection:', {
+        font: '12px Fredoka',
+        fill: '#666666'
+      }).setOrigin(0.5)
+
+      picker.add([backdrop, panel, title, subtitle])
+
+      // List polecats
+      let yPos = -panelHeight/2 + 105
+      for (const polecat of polecats) {
+        const statusIcon = polecat.status === 'working' ? '🔨' : polecat.status === 'stuck' ? '❌' : '💤'
+        const statusColor = polecat.status === 'working' ? 0x2ECC71 : polecat.status === 'stuck' ? 0xE74C3C : 0x95A5A6
+
+        // Row background
+        const rowBg = this.add.graphics()
+        rowBg.fillStyle(0xF8F8F8, 1)
+        rowBg.fillRoundedRect(-panelWidth/2 + 20, yPos, panelWidth - 40, 45, 8)
+
+        // Status badge
+        const badge = this.add.graphics()
+        badge.fillStyle(statusColor, 1)
+        badge.fillRoundedRect(-panelWidth/2 + 28, yPos + 8, 8, 29, 4)
+
+        // Polecat name
+        const name = this.add.text(-panelWidth/2 + 48, yPos + 10, `${statusIcon} ${polecat.name}`, {
+          font: 'bold 13px Fredoka',
+          fill: '#333333'
+        })
+
+        // Rig name
+        const rigLabel = this.add.text(-panelWidth/2 + 48, yPos + 28, `in ${polecat.rig || 'unknown'}`, {
+          font: '11px Fredoka',
+          fill: '#888888'
+        })
+
+        // Attack button
+        const attackBtn = this.add.graphics()
+        this.drawButton(attackBtn, panelWidth/2 - 90, yPos + 5, 55, 35, 0xE74C3C, true)
+        const attackText = this.add.text(panelWidth/2 - 62, yPos + 22, '🦭', {
+          font: '18px Fredoka'
+        }).setOrigin(0.5)
+        const attackZone = this.add.zone(panelWidth/2 - 62, yPos + 22, 55, 35)
+        attackZone.setInteractive({ useHandCursor: true })
+        attackZone.on('pointerup', async () => {
+          picker.destroy()
+          const agentId = `${polecat.rig}/polecats/${polecat.name}`
+          await this.doTestStuckDirect(agentId)
+        })
+
+        picker.add([rowBg, badge, name, rigLabel, attackBtn, attackText, attackZone])
+        yPos += 55
+      }
+
+      // Animate in
+      picker.setScale(0.8)
+      picker.setAlpha(0)
+      this.tweens.add({
+        targets: picker,
+        scale: 1,
+        alpha: 1,
+        duration: 200,
+        ease: 'Back.easeOut'
+      })
+
+    } catch (e) {
+      await this.showModal({
+        title: 'ERROR',
+        message: 'Failed to load polecats: ' + e.message,
+        showCancel: false
+      })
+    }
+  }
+
+  async doTestStuckDirect(agentId) {
+    try {
+      this.statusText.setText('Summoning sea lion...')
+
+      // Extract polecat name from agentId (format: rigName/polecats/polecatName)
+      const parts = agentId.split('/')
+      const polecatName = parts[parts.length - 1]
+
+      // Find the unit directly and play animation
+      if (this.gameScene) {
+        const unit = this.gameScene.units.get(`polecat-${polecatName}`)
+        if (unit) {
+          this.playNotificationSound('stuck')
+          this.gameScene.playSeaLionAttack(unit)
+          this.statusText.setText('Sea lion incoming!')
+
+          // Also update the server status
+          this.api.simulateStuck(agentId).catch(() => {})
+        } else {
+          this.statusText.setText('Polecat not found in game')
+        }
+      }
+    } catch (e) {
+      this.statusText.setText('Simulation failed')
+      await this.showModal({
+        title: 'ERROR',
+        message: e.message,
+        showCancel: false
+      })
+    }
+  }
+
   async doSling(agentId) {
     const issueId = await this.showModal({
       title: 'ASSIGN WORK',
@@ -2804,7 +2989,7 @@ export class UIScene extends Phaser.Scene {
         count.setY(y + buttonHeight/2 - 1)
       })
 
-      zone.on('pointerdown', () => {
+      zone.on('pointerup', () => {
         if (this.gameScene) {
           this.gameScene.panToVillage(village.name)
         }
@@ -3026,7 +3211,7 @@ export class UIScene extends Phaser.Scene {
         this.drawButton(okBtn, showCancel ? 10 : -btnWidth/2, btnY - 18, btnWidth, 36, 0x2ECC71, true)
         okText.setY(btnY)
       })
-      okZone.on('pointerdown', () => {
+      okZone.on('pointerup', () => {
         cleanup()
         // Return inputValue for input modals, true for confirm modals
         resolve(options.inputType ? inputValue : true)
@@ -3054,7 +3239,7 @@ export class UIScene extends Phaser.Scene {
           this.drawButton(cancelBtn, -btnWidth - 10, btnY - 18, btnWidth, 36, 0x95A5A6, true)
           cancelText.setY(btnY)
         })
-        cancelZone.on('pointerdown', () => {
+        cancelZone.on('pointerup', () => {
           cleanup()
           resolve(null)
         })

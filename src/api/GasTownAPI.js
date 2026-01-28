@@ -81,12 +81,12 @@ export class GasTownAPI {
 
   // Get agent's current hook
   async getHook(agentId) {
-    return this.request(`/agents/${agentId}/hook`)
+    return this.request(`/agents/${encodeURIComponent(agentId)}/hook`)
   }
 
   // Emergency stop
   async stop(agentId) {
-    return this.request(`/agents/${agentId}/stop`, { method: 'POST' })
+    return this.request(`/agents/${encodeURIComponent(agentId)}/stop`, { method: 'POST' })
   }
 
   // Get costs
@@ -109,7 +109,7 @@ export class GasTownAPI {
 
   // Reassign work from one agent to another
   async reassign(oldAgentId, newAgentId, rig = null) {
-    return this.request(`/agents/${oldAgentId}/reassign`, {
+    return this.request(`/agents/${encodeURIComponent(oldAgentId)}/reassign`, {
       method: 'POST',
       body: JSON.stringify({ newAgent: newAgentId, rig })
     })
@@ -117,14 +117,14 @@ export class GasTownAPI {
 
   // Mark agent's task as complete
   async markComplete(agentId) {
-    return this.request(`/agents/${agentId}/complete`, {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/complete`, {
       method: 'POST'
     })
   }
 
   // Simulate agent getting stuck (for testing sea lion animation)
   async simulateStuck(agentId) {
-    return this.request(`/agents/${agentId}/simulate-stuck`, {
+    return this.request(`/agents/${encodeURIComponent(agentId)}/simulate-stuck`, {
       method: 'POST'
     })
   }
